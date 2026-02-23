@@ -1,4 +1,4 @@
-# joularcode-java
+# Joular Code - Java
 
 ## :newspaper: License
 
