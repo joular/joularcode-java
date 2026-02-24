@@ -1,5 +1,7 @@
 # Joular Code - Java
 
+This project of part of [Joular Code](https://github.com/joular/joularcode)
+
 ## :newspaper: License
 
 Joular Core is licensed under the GNU LGPL 3 license only (LGPL-3.0-only).
