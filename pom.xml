@@ -43,7 +43,7 @@
     <scm>
         <connection>scm:git:git://github.com/joular/joularcode-java.git</connection>
         <developerConnection>scm:git:ssh://github.com:joular/joularcode-java.git</developerConnection>
-        <url>http://github.com/joular/joularcode-java/tree/develop</url>
+        <url>https://github.com/joular/joularcode-java</url>
     </scm>
 
     <properties>
@@ -88,6 +88,7 @@
                             <Premain-Class>org.noureddine.joular.joularcodejava.agent.Agent</Premain-Class>
                             <Can-Redefine-Classes>true</Can-Redefine-Classes>
                             <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                            <Implementation-Version>${project.version}</Implementation-Version>
                         </manifestEntries>
                     </archive>
                 </configuration>
@@ -95,7 +96,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.1</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -120,6 +121,7 @@
                                         <Premain-Class>org.noureddine.joular.joularcodejava.agent.Agent</Premain-Class>
                                         <Can-Redefine-Classes>true</Can-Redefine-Classes>
                                         <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>

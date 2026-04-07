@@ -41,7 +41,7 @@ public class ResultWriter {
             long timestamp,
             double intervalSeconds,
             String fileName) {
-        String filePath = resultsPath + "/" + fileName;
+        String filePath = Paths.get(resultsPath, fileName).toString();
         logger.log(Level.INFO, () -> "Writing " + methodPower.size() + " methods to " + filePath);
         try (
                 PrintWriter writer = new PrintWriter(new FileWriter(filePath, true))) {

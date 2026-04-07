@@ -75,7 +75,7 @@ public class JoularCoreHttpSource implements PowerSource {
 
         while (i < json.length()) {
             char c = json.charAt(i);
-            if (Character.isDigit(c) || c == '.' || c == '-' || c == 'e' || c == 'E') {
+            if (Character.isDigit(c) || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E') {
                 i++;
             } else {
                 break;
