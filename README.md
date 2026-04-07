@@ -148,15 +148,6 @@ methods-filtering-prefix=com.example,org.myapp
 - When set, `methods-power-app.csv` only contains branches where at least one stack element matches a prefix. Energy from unmatched (e.g., JDK) frames that are called by a matched method is attributed upward to the matched method.
 - `methods-power-all.csv` always contains every observed branch regardless of this setting.
 
-### Example configuration
-
-```properties
-power-source-type=ringbuffer
-joular-core-ringbuffer-path=/dev/shm/joularcorering
-stack-monitoring-sample-rate=10
-results-path=joular-code-java-results
-methods-filtering-prefix=com.example.myapp
-```
 
 ## :bar_chart: Generated Files
 
