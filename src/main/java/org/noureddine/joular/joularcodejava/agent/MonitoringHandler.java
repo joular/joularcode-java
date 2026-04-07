@@ -34,6 +34,7 @@ public class MonitoringHandler implements Runnable {
     private static final Logger logger = Logger.getLogger(MonitoringHandler.class.getName());
 
     private volatile boolean running = true;
+    private volatile Thread monitoringThread;
     private final PowerSource powerSource;
     private final ResultWriter resultWriter;
     private final long sampleRateMs;
@@ -58,6 +59,21 @@ public class MonitoringHandler implements Runnable {
 
     public void stop() {
         this.running = false;
+        Thread t = this.monitoringThread;
+        if (t != null) {
+            t.interrupt();
+        }
+    }
+
+    public void joinWithTimeout(long timeoutMs) {
+        Thread t = this.monitoringThread;
+        if (t != null) {
+            try {
+                t.join(timeoutMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     public boolean awaitStartup(long timeoutMs) {
@@ -80,6 +96,7 @@ public class MonitoringHandler implements Runnable {
     @Override
     public void run() {
         logger.log(Level.INFO, "Monitoring loop started.");
+        this.monitoringThread = Thread.currentThread();
         long monitoringThreadId = Thread.currentThread().getId(); // Is deprecated in Java 19, use threadId() instead
 
         try {

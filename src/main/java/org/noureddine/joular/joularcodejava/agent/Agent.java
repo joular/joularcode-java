@@ -37,7 +37,13 @@ public class Agent {
             Agent.class.getName());
 
     private static void printJoularCodeJavaBanner() {
-        String welcomeMessage = "Joular Code - Java: version 0.0.1";
+        String version = Agent.class.getPackage() != null
+                ? Agent.class.getPackage().getImplementationVersion()
+                : null;
+        if (version == null || version.isEmpty()) {
+            version = "unknown";
+        }
+        String welcomeMessage = "Joular Code - Java: version " + version;
         boolean noColor = System.getenv("NO_COLOR") != null;
 
         if (noColor) {
@@ -120,12 +126,7 @@ public class Agent {
                 new Thread(() -> {
                     logger.log(Level.INFO, "Stopping Joular Code Java...");
                     monitoringHandler.stop();
-                    // Give it a moment to perform final save
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
+                    monitoringHandler.joinWithTimeout(2000);
                 }));
 
         logger.log(Level.INFO, "Joular Code Java started successfully.");

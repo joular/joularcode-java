@@ -20,3 +20,6 @@ buildNumber.properties
 .idea/
 .zed/
 .vscode/
+joular-code-java-results/
+joularcodejava.properties
+MutualCalculation.class

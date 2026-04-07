@@ -56,9 +56,9 @@ public class AgentProperties {
     }
 
     public String getPowerSourceType() {
-        String value = properties.getProperty("power-source-type", "csv");
+        String value = properties.getProperty("power-source-type", "ringbuffer");
         if (value == null || value.trim().isEmpty()) {
-            return "csv";
+            return "ringbuffer";
         }
         return value.trim();
     }
