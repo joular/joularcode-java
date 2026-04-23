@@ -22,4 +22,4 @@ buildNumber.properties
 .vscode/
 joular-code-java-results/
 joularcodejava.properties
-MutualCalculation.class
+*.class

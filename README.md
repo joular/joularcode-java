@@ -99,7 +99,7 @@ All configuration is done via a `joularcodejava.properties` file. Joular Code - 
 | `joular-core-csv-path` | `joularcore-data.csv` | Path to the Joular Core CSV output file |
 | `joular-core-http-url` | `http://localhost:8080/data` | URL of the Joular Core HTTP endpoint |
 | `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds. Lower = more accurate but higher overhead |
-| `results-path` | `joular-agent-results` | Directory where CSV result files are written |
+| `results-path` | `joular-code-java-results` | Directory where CSV result files are written |
 | `methods-filtering-prefix` | *(empty)* | Comma-separated list of package/class prefixes to filter app-specific methods (e.g., `com.example,org.myapp`) |
 
 ### Power source backends
@@ -181,6 +181,13 @@ timestamp,branch,power_watts,energy_joules,interval_seconds
 1746000000000,com.example.Main.main;com.example.Worker.compute,2.341500000,2.341500000,1.000000000
 1746000001000,com.example.Main.main;com.example.Worker.compute,2.158300000,2.158300000,1.000000000
 ```
+
+## :warning: Troubleshooting
+
+- **"Joular Core ring buffer appears stale"** (`WARNING` log): Joular Core has stopped advancing the ring buffer, so confirm that the Joular Core process is still running and still writing data. Until that resumes, Joular Code - Java gives a power value of `0.0`.
+- **"Could not read power data from CSV: ..."** (`WARNING` log): the configured `joular-core-csv-path` does not exist. Check that Joular Core is running in CSV export mode and writing to the same path. The warning is logged only once until the file becomes available again.
+- **HTTP mode returns 0.0 power**: the HTTP endpoint must return a JSON object containing a `"cpu_power": <number>` key directly on the top-level object (not nested). Keys like `"last_cpu_power"` or `"cpu_power_limit"` are ignored.
+- **No rows in `methods-power-app.csv`**: either `methods-filtering-prefix` is unset (in which case rows still go to `methods-power-all.csv`), or the configured prefix does not match any fully-qualified method name in your application.
 
 ## :information_source: Notes
 

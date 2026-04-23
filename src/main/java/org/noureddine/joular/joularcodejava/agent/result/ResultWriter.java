@@ -26,6 +26,7 @@ public class ResultWriter {
 
     private static final Logger logger = Logger.getLogger(ResultWriter.class.getName());
     private final String resultsPath;
+    private boolean writeErrorLogged = false;
 
     public ResultWriter(String resultsPath) {
         this.resultsPath = resultsPath;
@@ -57,14 +58,49 @@ public class ResultWriter {
                             Locale.US,
                             "%d,%s,%.9f,%.9f,%.9f%n",
                             timestamp,
-                            entry.getKey(),
+                            csvEscape(entry.getKey()),
                             powerWatts,
                             energyJoules,
                             intervalSeconds);
                 }
             }
+            writeErrorLogged = false;
         } catch (IOException e) {
-            logger.log(Level.SEVERE, "Error writing runtime methods to " + filePath, e);
+            if (!writeErrorLogged) {
+                logger.log(Level.SEVERE, "Error writing runtime methods to " + filePath, e);
+                writeErrorLogged = true;
+            } else {
+                logger.log(Level.FINE, () -> "Error writing runtime methods to " + filePath + ": " + e.getMessage());
+            }
         }
+    }
+
+    private static String csvEscape(String value) {
+        if (value == null) {
+            return "";
+        }
+        boolean needsQuoting = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == ',' || c == '"' || c == '\n' || c == '\r') {
+                needsQuoting = true;
+                break;
+            }
+        }
+        if (!needsQuoting) {
+            return value;
+        }
+        StringBuilder sb = new StringBuilder(value.length() + 2);
+        sb.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"') {
+                sb.append('"').append('"');
+            } else {
+                sb.append(c);
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 }

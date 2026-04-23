@@ -32,21 +32,21 @@ public class AgentProperties {
 
         // Check system properties
         String configPath = System.getProperty("joularcodejava.properties");
-        
+
         // If not provided, check local directory for properties file
         if (configPath == null || configPath.isEmpty()) {
             String workingDir = System.getProperty("user.dir");
             configPath = workingDir + File.separator + "joularcodejava.properties";
         }
-        
+
         File configFile = new File(configPath);
-        
+
         // If file does not exist, load defaults
         if (!configFile.exists() || !configFile.isFile()) {
             logger.log(Level.INFO, "Could not load properties from " + configPath + ", using defaults.");
             return;
         }
-        
+
         // Load properties from file
         try (FileInputStream in = new FileInputStream(configPath)) {
             properties.load(in);
@@ -56,25 +56,15 @@ public class AgentProperties {
     }
 
     public String getPowerSourceType() {
-        String value = properties.getProperty("power-source-type", "ringbuffer");
-        if (value == null || value.trim().isEmpty()) {
-            return "ringbuffer";
-        }
-        return value.trim();
+        return getStringProperty("power-source-type", "ringbuffer");
     }
 
     public String getJoularCoreCsvPath() {
-        return properties.getProperty(
-            "joular-core-csv-path",
-            "joularcore-data.csv"
-        );
+        return getStringProperty("joular-core-csv-path", "joularcore-data.csv");
     }
 
     public String getJoularCoreHttpUrl() {
-        return properties.getProperty(
-            "joular-core-http-url",
-            "http://localhost:8080/data"
-        );
+        return getStringProperty("joular-core-http-url", "http://localhost:8080/data");
     }
 
     public String getRingBufferPath() {
@@ -87,10 +77,7 @@ public class AgentProperties {
         } else {
             defaultPath = "/dev/shm/joularcorering";
         }
-        return properties.getProperty(
-            "joular-core-ringbuffer-path",
-            defaultPath
-        );
+        return getStringProperty("joular-core-ringbuffer-path", defaultPath);
     }
 
     public long getSampleRateMs() {
@@ -98,16 +85,12 @@ public class AgentProperties {
     }
 
     public String getResultsPath() {
-        return properties.getProperty("results-path", "joular-agent-results");
-    }
-
-    public String getMethodsFilteringPrefix() {
-        return properties.getProperty("methods-filtering-prefix", "");
+        return getStringProperty("results-path", "joular-code-java-results");
     }
 
     public List<String> getMethodsFilteringPrefixes() {
-        String value = getMethodsFilteringPrefix();
-        if (value == null || value.trim().isEmpty()) {
+        String value = getStringProperty("methods-filtering-prefix", "");
+        if (value.isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -133,6 +116,15 @@ public class AgentProperties {
         } catch (IOException e) {
             logger.log(Level.FINE, "Could not load classpath default properties.", e);
         }
+    }
+
+    private String getStringProperty(String key, String defaultValue) {
+        String value = properties.getProperty(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? defaultValue : trimmed;
     }
 
     private long getPositiveLongProperty(String key, long defaultValue) {

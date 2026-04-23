@@ -54,7 +54,7 @@ public class JoularCoreHttpSource implements PowerSource {
     }
 
     private static double extractCpuPower(String json) {
-        int keyPos = json.indexOf("\"cpu_power\"");
+        int keyPos = findKey(json, "cpu_power");
         if (keyPos == -1) {
             return 0.0;
         }
@@ -87,6 +87,29 @@ public class JoularCoreHttpSource implements PowerSource {
         } catch (NumberFormatException e) {
             return 0.0;
         }
+    }
+
+    // Find a JSON key occurrence where the character preceding the opening quote
+    // is '{' or ',' (possibly with whitespace in between), so that keys like
+    // "last_cpu_power" do not match when searching for "cpu_power".
+    private static int findKey(String json, String key) {
+        String quoted = "\"" + key + "\"";
+        int from = 0;
+        while (from < json.length()) {
+            int pos = json.indexOf(quoted, from);
+            if (pos == -1) {
+                return -1;
+            }
+            int j = pos - 1;
+            while (j >= 0 && Character.isWhitespace(json.charAt(j))) {
+                j--;
+            }
+            if (j < 0 || json.charAt(j) == '{' || json.charAt(j) == ',') {
+                return pos;
+            }
+            from = pos + quoted.length();
+        }
+        return -1;
     }
 
     @Override
