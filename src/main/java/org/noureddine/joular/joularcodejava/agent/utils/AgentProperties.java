@@ -11,10 +11,14 @@
 
 package org.noureddine.joular.joularcodejava.agent.utils;
 
-import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -47,8 +51,8 @@ public class AgentProperties {
             return;
         }
 
-        // Load properties from file
-        try (FileInputStream in = new FileInputStream(configPath)) {
+        // Load properties from file (UTF-8 so users can write non-ASCII paths/values)
+        try (Reader in = Files.newBufferedReader(Paths.get(configPath), StandardCharsets.UTF_8)) {
             properties.load(in);
         } catch (IOException e) {
             logger.log(Level.WARNING, "Could not load properties from " + configPath + ", using defaults.");
@@ -110,8 +114,11 @@ public class AgentProperties {
 
     private void loadClasspathDefaults() {
         try (InputStream in = AgentProperties.class.getClassLoader().getResourceAsStream("joularcodejava.properties")) {
-            if (in != null) {
-                properties.load(in);
+            if (in == null) {
+                return;
+            }
+            try (Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+                properties.load(reader);
             }
         } catch (IOException e) {
             logger.log(Level.FINE, "Could not load classpath default properties.", e);

@@ -15,7 +15,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -101,7 +100,12 @@ public class JoularCoreCSVSource implements PowerSource {
 
             String chunk = new String(data, StandardCharsets.UTF_8);
             String[] lines = chunk.split("\\r?\\n");
-            for (int i = lines.length - 1; i >= 0; i--) {
+            // If we did not start reading at the beginning of the file, the first slice in
+            // `lines` is almost certainly a partial line (we landed mid-record). Skipping
+            // it avoids parsing a truncated CSV row whose 2nd field may be a wrong-but-valid
+            // numeric prefix (e.g., "2.3" of "2.345").
+            int firstSafeIndex = (start > 0) ? 1 : 0;
+            for (int i = lines.length - 1; i >= firstSafeIndex; i--) {
                 String line = lines[i].trim();
                 if (line.isEmpty()) {
                     continue;
@@ -115,7 +119,7 @@ public class JoularCoreCSVSource implements PowerSource {
         }
     }
 
-    private Double parseCpuPower(String csvLine) {
+    static Double parseCpuPower(String csvLine) {
         String[] parts = csvLine.split(",");
         if (parts.length <= 1) {
             return null;
@@ -127,18 +131,32 @@ public class JoularCoreCSVSource implements PowerSource {
         }
 
         try {
-            return Double.parseDouble(cpuPowerText);
+            double value = Double.parseDouble(cpuPowerText);
+            if (!Double.isFinite(value) || value < 0) {
+                return null;
+            }
+            return value;
         } catch (NumberFormatException e) {
             logger.log(Level.FINE, () -> "Could not parse power value: " + cpuPowerText);
             return null;
         }
     }
 
-    private boolean isHeaderLine(String line) {
-        String lower = line.toLowerCase(Locale.ROOT);
-        return lower.startsWith("total")
-            || lower.startsWith("timestamp")
-            || lower.contains("cpu_power");
+    static boolean isHeaderLine(String line) {
+        // A data row's first column is a numeric timestamp; any non-numeric first column
+        // is treated as a header/comment row. This is structurally robust and avoids
+        // false positives from data rows that happen to contain known column names.
+        int comma = line.indexOf(',');
+        String first = (comma == -1 ? line : line.substring(0, comma)).trim();
+        if (first.isEmpty()) {
+            return true;
+        }
+        try {
+            Double.parseDouble(first);
+            return false;
+        } catch (NumberFormatException e) {
+            return true;
+        }
     }
 
     private void updateFileMetadata(long length, long modified) {

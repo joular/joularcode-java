@@ -129,6 +129,9 @@ public class JoularCoreRingBufferSource implements PowerSource {
         }
 
         trackStaleness(head1);
+        if (!Double.isFinite(value) || value < 0) {
+            return lastKnownPower;
+        }
         lastKnownPower = value;
         return value;
     }

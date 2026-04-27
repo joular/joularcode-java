@@ -18,6 +18,7 @@ import java.lang.management.ThreadMXBean;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Date;
+import java.util.Locale;
 import java.util.logging.Formatter;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -140,6 +141,7 @@ public class Agent {
                         @Override
                         public String format(LogRecord record) {
                             StringBuilder formatted = new StringBuilder(String.format(
+                                    Locale.ROOT,
                                     "%1$td-%1$tm-%1$tY %1$tH:%1$tM:%1$tS %2$s: %3$s%n",
                                     new Date(record.getMillis()),
                                     record.getLevel().getName(),

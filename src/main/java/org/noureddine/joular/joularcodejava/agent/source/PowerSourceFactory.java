@@ -24,16 +24,21 @@ public class PowerSourceFactory {
         String type = properties.getPowerSourceType();
         String normalizedType = type.trim().toLowerCase(Locale.ROOT);
         logger.log(Level.INFO, () -> "Selecting power source type: " + type);
-        switch (normalizedType) {
-            case "csv":
-                return new JoularCoreCSVSource(properties.getJoularCoreCsvPath());
-            case "http":
-                return new JoularCoreHttpSource(properties.getJoularCoreHttpUrl());
-            case "ringbuffer":
-                return new JoularCoreRingBufferSource(properties.getRingBufferPath());
-            default:
-                logger.log(Level.SEVERE, () -> "Unknown power source type: " + type);
-                return null;
+        try {
+            switch (normalizedType) {
+                case "csv":
+                    return new JoularCoreCSVSource(properties.getJoularCoreCsvPath());
+                case "http":
+                    return new JoularCoreHttpSource(properties.getJoularCoreHttpUrl());
+                case "ringbuffer":
+                    return new JoularCoreRingBufferSource(properties.getRingBufferPath());
+                default:
+                    logger.log(Level.SEVERE, () -> "Unknown power source type: " + type);
+                    return null;
+            }
+        } catch (IllegalArgumentException e) {
+            logger.log(Level.SEVERE, "Invalid configuration for power source '" + type + "': " + e.getMessage());
+            return null;
         }
     }
 }

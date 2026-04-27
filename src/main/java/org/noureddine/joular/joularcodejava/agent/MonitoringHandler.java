@@ -11,6 +11,7 @@
 
 package org.noureddine.joular.joularcodejava.agent;
 
+import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +34,9 @@ public class MonitoringHandler implements Runnable {
 
     private static final Logger logger = Logger.getLogger(MonitoringHandler.class.getName());
 
+    private static final long NANOS_PER_MILLI = 1_000_000L;
+    private static final long NANOS_PER_SECOND = 1_000_000_000L;
+
     private volatile boolean running = true;
     private volatile Thread monitoringThread;
     private final PowerSource powerSource;
@@ -40,7 +44,7 @@ public class MonitoringHandler implements Runnable {
     private final long sampleRateMs;
     private final List<String> methodsFilteringPrefixes;
     private final long computationIntervalMs = 1000;
-    private final long computationIntervalNs = computationIntervalMs * 1_000_000L;
+    private final long computationIntervalNs = computationIntervalMs * NANOS_PER_MILLI;
     private final ThreadMXBean threadBean;
     private final OperatingSystemMXBean osBean;
     private final CountDownLatch startupLatch = new CountDownLatch(1);
@@ -76,6 +80,16 @@ public class MonitoringHandler implements Runnable {
         }
     }
 
+    /**
+     * Waits up to {@code timeoutMs} for the startup attempt to settle (succeed or fail).
+     *
+     * <p>Returns {@code true} as soon as the latch is released — which happens both on
+     * successful initialization <em>and</em> on a startup failure. To distinguish, the
+     * caller must consult {@link #isStartupSuccessful()} / {@link #getStartupFailure()}.
+     *
+     * @return {@code true} if startup completed (success or failure) within the timeout,
+     *         {@code false} if the timeout elapsed first (or the wait was interrupted).
+     */
     public boolean awaitStartup(long timeoutMs) {
         try {
             return startupLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
@@ -101,6 +115,7 @@ public class MonitoringHandler implements Runnable {
 
         try {
             try {
+                resultWriter.verifyWritable();
                 powerSource.initialize();
                 startupSuccessful = true;
             } catch (Exception e) {
@@ -122,14 +137,19 @@ public class MonitoringHandler implements Runnable {
                     Map<Long, Integer> totalThreadSamples = new HashMap<>();
 
                     while ((System.nanoTime() - windowStartNs) < computationIntervalNs && running) {
-                        for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
-                            Thread t = entry.getKey();
-                            long threadId = t.getId(); // Is deprecated in Java 19, use threadId() instead
+                        // dumpAllThreads avoids the Map<Thread, StackTraceElement[]> wrapping that
+                        // Thread.getAllStackTraces() builds on top of the same native call.
+                        ThreadInfo[] threadInfos = threadBean.dumpAllThreads(false, false);
+                        for (ThreadInfo info : threadInfos) {
+                            if (info == null) {
+                                continue;
+                            }
+                            long threadId = info.getThreadId();
                             if (threadId == monitoringThreadId) {
                                 continue;
                             }
-                            if (t.getState() == Thread.State.RUNNABLE) {
-                                StackTraceElement[] stack = entry.getValue();
+                            if (info.getThreadState() == Thread.State.RUNNABLE) {
+                                StackTraceElement[] stack = info.getStackTrace();
 
                                 totalThreadSamples.merge(threadId, 1, Integer::sum);
 
@@ -159,7 +179,7 @@ public class MonitoringHandler implements Runnable {
                     long windowEndNs = System.nanoTime();
                     long nowMs = System.currentTimeMillis();
                     long measuredIntervalNs = windowEndNs - windowStartNs;
-                    double measuredIntervalSeconds = measuredIntervalNs / 1_000_000_000.0;
+                    double measuredIntervalSeconds = (double) measuredIntervalNs / NANOS_PER_SECOND;
                     if (measuredIntervalSeconds <= 0) {
                         continue;
                     }
@@ -226,7 +246,12 @@ public class MonitoringHandler implements Runnable {
             logger.log(Level.SEVERE, "Error in monitoring loop", e);
         } finally {
             startupLatch.countDown();
-            powerSource.close();
+            try {
+                powerSource.close();
+            } catch (RuntimeException e) {
+                logger.log(Level.FINE, "Error closing power source", e);
+            }
+            resultWriter.close();
         }
     }
 
