@@ -28,7 +28,7 @@ public class JoularCoreRingBufferSource implements PowerSource {
 
     private static final Logger logger = Logger.getLogger(JoularCoreRingBufferSource.class.getName());
     private static final boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
-    private static final int ENTRY_SIZE = 40; // 5 * f64 (8 bytes each)
+    private static final int ENTRY_SIZE = 48; // u64 timestamp + 5 * f64 (8 bytes each)
     private static final int BUFFER_SIZE = 5;
     private static final int FILE_SIZE = 8 + BUFFER_SIZE * ENTRY_SIZE;
     private static final int STALENESS_THRESHOLD = 10;
@@ -117,9 +117,9 @@ public class JoularCoreRingBufferSource implements PowerSource {
 
         int idx = (int) ((head1 - 1) % BUFFER_SIZE);
         int offset = 8 + idx * ENTRY_SIZE;
-        // RingBufferStruct: cpu_power, gpu_power, total_power, cpu_usage, pid_app_power
-        // cpu_power is the 1st f64 (no additional offset)
-        double value = buffer.getDouble(offset);
+        // RingBufferStruct: timestamp (u64), cpu_power, gpu_power, total_power, cpu_usage, pid_app_power
+        // cpu_power is the 2nd field; skip 8-byte timestamp
+        double value = buffer.getDouble(offset + 8);
 
         long head2 = buffer.getLong(0);
         if (head1 != head2) {
