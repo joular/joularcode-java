@@ -26,6 +26,7 @@ import java.lang.management.ThreadMXBean;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -103,15 +104,25 @@ class MonitoringHandlerTest {
      * {@link MonitoringHandler} using the provided results path.
      * A 100 ms sample rate is used so the monitoring loop cycles quickly and
      * tests remain fast.
+     *
+     * <p>{@link Properties#store} is used instead of plain string concatenation so
+     * that Windows paths with backslashes are properly double-escaped (e.g.,
+     * {@code C:\tmp} → {@code C:\\tmp}). Without this, {@link Properties#load}
+     * would silently consume the backslashes as escape-sequence prefixes and
+     * resolve an entirely different path, causing the unwritable-path test to
+     * pass startup checks on Windows when it should fail.
      */
     private MonitoringHandler makeHandler(String resultsPath) throws Exception {
         Path propsFile = tempDir.resolve("joularcodejava.properties");
-        Files.writeString(propsFile,
-                "results-path=" + resultsPath + "\nstack-monitoring-sample-rate=100\n",
-                StandardCharsets.UTF_8);
+        Properties props = new Properties();
+        props.setProperty("results-path", resultsPath);
+        props.setProperty("stack-monitoring-sample-rate", "100");
+        try (var w = Files.newBufferedWriter(propsFile, StandardCharsets.UTF_8)) {
+            props.store(w, null);
+        }
         System.setProperty("joularcodejava.properties", propsFile.toString());
-        AgentProperties props = new AgentProperties();
-        return new MonitoringHandler(props, mockPowerSource, threadBean, osBean);
+        AgentProperties agentProps = new AgentProperties();
+        return new MonitoringHandler(agentProps, mockPowerSource, threadBean, osBean);
     }
 
     /**
