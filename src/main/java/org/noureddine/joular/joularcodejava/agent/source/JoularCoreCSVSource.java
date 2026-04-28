@@ -11,10 +11,11 @@
 
 package org.noureddine.joular.joularcodejava.agent.source;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -24,14 +25,14 @@ public class JoularCoreCSVSource implements PowerSource {
         JoularCoreCSVSource.class.getName()
     );
     private static final int TAIL_READ_SIZE = 8192;
-    private final String csvPath;
+    private final Path csvPath;
     private double lastKnownPower = 0.0;
     private long lastKnownLength = -1L;
     private long lastKnownModified = -1L;
     private boolean missingFileWarningLogged = false;
 
     public JoularCoreCSVSource(String csvPath) {
-        this.csvPath = csvPath;
+        this.csvPath = Path.of(csvPath);
     }
 
     @Override
@@ -41,8 +42,7 @@ public class JoularCoreCSVSource implements PowerSource {
 
     @Override
     public double getCurrentPower() {
-        File csvFile = new File(csvPath);
-        if (!csvFile.exists() || !csvFile.isFile()) {
+        if (!Files.exists(csvPath) || !Files.isRegularFile(csvPath)) {
             if (!missingFileWarningLogged) {
                 logger.log(
                     Level.WARNING,
@@ -56,14 +56,14 @@ public class JoularCoreCSVSource implements PowerSource {
 
         missingFileWarningLogged = false;
 
-        long currentLength = csvFile.length();
-        long currentModified = csvFile.lastModified();
-        if (currentLength == lastKnownLength && currentModified == lastKnownModified) {
-            return lastKnownPower;
-        }
-
         try {
-            String lastLine = readLastNonEmptyLine(csvFile);
+            long currentLength = Files.size(csvPath);
+            long currentModified = Files.getLastModifiedTime(csvPath).toMillis();
+            if (currentLength == lastKnownLength && currentModified == lastKnownModified) {
+                return lastKnownPower;
+            }
+
+            String lastLine = readLastNonEmptyLine();
             if (lastLine == null) {
                 updateFileMetadata(currentLength, currentModified);
                 return lastKnownPower;
@@ -73,19 +73,19 @@ public class JoularCoreCSVSource implements PowerSource {
             if (parsedPower != null) {
                 lastKnownPower = parsedPower;
             }
+            updateFileMetadata(currentLength, currentModified);
         } catch (IOException e) {
             logger.log(Level.FINE, () -> "Could not read latest power row from CSV: " + csvPath);
         }
 
-        updateFileMetadata(currentLength, currentModified);
         return lastKnownPower;
     }
 
     @Override
     public void close() {}
 
-    private String readLastNonEmptyLine(File csvFile) throws IOException {
-        try (RandomAccessFile file = new RandomAccessFile(csvFile, "r")) {
+    private String readLastNonEmptyLine() throws IOException {
+        try (RandomAccessFile file = new RandomAccessFile(csvPath.toFile(), "r")) {
             long length = file.length();
             if (length <= 0) {
                 return null;

@@ -16,11 +16,12 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.PointerType;
 import com.sun.jna.WString;
-import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -67,8 +68,7 @@ public class JoularCoreRingBufferSource implements PowerSource {
     public void initialize() throws Exception {
         logger.log(Level.INFO, () -> "Initializing ring buffer source: " + path);
         if (IS_WINDOWS) {
-            File file = new File(path);
-            if (file.exists() && file.isFile()) {
+            if (Files.exists(Path.of(path)) && Files.isRegularFile(Path.of(path))) {
                 mapFile(path);
             } else {
                 mapWindowsSharedMemory(path);

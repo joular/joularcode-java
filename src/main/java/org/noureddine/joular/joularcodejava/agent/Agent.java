@@ -17,7 +17,6 @@ import java.lang.management.OperatingSystemMXBean;
 import java.lang.management.ThreadMXBean;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.util.Date;
 import java.util.Locale;
 import java.util.logging.Formatter;
 import java.util.logging.Handler;
@@ -82,17 +81,16 @@ public class Agent {
         }
 
         OperatingSystemMXBean osBean = ManagementFactory.getOperatingSystemMXBean();
-        if (!(osBean instanceof com.sun.management.OperatingSystemMXBean)) {
+        if (!(osBean instanceof com.sun.management.OperatingSystemMXBean sunOsBean)) {
             logger.log(Level.SEVERE,
                     "Unsupported JVM: requires com.sun.management.OperatingSystemMXBean for CPU-load metrics. Joular Code - Java will not start.");
             return;
         }
-        com.sun.management.OperatingSystemMXBean sunOsBean = (com.sun.management.OperatingSystemMXBean) osBean;
 
         // Warm-up OS Bean to avoid initial negative readings
         logger.log(Level.INFO, "Warming up OS bean...");
         for (int i = 0; i < 2; i++) {
-            sunOsBean.getSystemCpuLoad();
+            sunOsBean.getCpuLoad();
             sunOsBean.getProcessCpuLoad();
             try {
                 Thread.sleep(500);
@@ -143,7 +141,7 @@ public class Agent {
                             StringBuilder formatted = new StringBuilder(String.format(
                                     Locale.ROOT,
                                     "%1$td-%1$tm-%1$tY %1$tH:%1$tM:%1$tS %2$s: %3$s%n",
-                                    new Date(record.getMillis()),
+                                    record.getMillis(),
                                     record.getLevel().getName(),
                                     formatMessage(record)));
                             if (record.getThrown() != null) {

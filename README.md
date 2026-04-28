@@ -36,7 +36,7 @@ Joular Code - Java runs as a Java instrumentation agent alongside your applicati
 
 ### Requirements
 
-- Java 11 or later
+- Java 21 or later
 - Apache Maven 3.6 or later
 - [Joular Core](https://github.com/joular/joularcore) running on the same machine
 

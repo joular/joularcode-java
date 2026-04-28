@@ -11,14 +11,13 @@
 
 package org.noureddine.joular.joularcodejava.agent.utils;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -34,28 +33,23 @@ public class AgentProperties {
     public AgentProperties() {
         loadClasspathDefaults();
 
-        // Check system properties
-        String configPath = System.getProperty("joularcodejava.properties");
-
-        // If not provided, check local directory for properties file
-        if (configPath == null || configPath.isEmpty()) {
-            String workingDir = System.getProperty("user.dir");
-            configPath = workingDir + File.separator + "joularcodejava.properties";
-        }
-
-        File configFile = new File(configPath);
+        // Check system properties; fall back to joularcodejava.properties in the working directory
+        String rawPath = System.getProperty("joularcodejava.properties");
+        Path configFilePath = (rawPath == null || rawPath.isEmpty())
+                ? Path.of(System.getProperty("user.dir")).resolve("joularcodejava.properties")
+                : Path.of(rawPath);
 
         // If file does not exist, load defaults
-        if (!configFile.exists() || !configFile.isFile()) {
-            logger.log(Level.INFO, "Could not load properties from " + configPath + ", using defaults.");
+        if (!Files.exists(configFilePath) || !Files.isRegularFile(configFilePath)) {
+            logger.log(Level.INFO, "Could not load properties from " + configFilePath + ", using defaults.");
             return;
         }
 
         // Load properties from file (UTF-8 so users can write non-ASCII paths/values)
-        try (Reader in = Files.newBufferedReader(Paths.get(configPath), StandardCharsets.UTF_8)) {
+        try (Reader in = Files.newBufferedReader(configFilePath, StandardCharsets.UTF_8)) {
             properties.load(in);
         } catch (IOException e) {
-            logger.log(Level.WARNING, "Could not load properties from " + configPath + ", using defaults.");
+            logger.log(Level.WARNING, "Could not load properties from " + configFilePath + ", using defaults.");
         }
     }
 

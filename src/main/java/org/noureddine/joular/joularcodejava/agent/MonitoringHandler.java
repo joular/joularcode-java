@@ -111,7 +111,7 @@ public class MonitoringHandler implements Runnable {
     public void run() {
         logger.log(Level.INFO, "Monitoring loop started.");
         this.monitoringThread = Thread.currentThread();
-        long monitoringThreadId = Thread.currentThread().getId(); // Is deprecated in Java 19, use threadId() instead
+        long monitoringThreadId = Thread.currentThread().threadId();
 
         try {
             try {
@@ -257,7 +257,7 @@ public class MonitoringHandler implements Runnable {
 
     private double estimateProcessShare() {
         double processCpuLoad = sanitizeCpuLoad(osBean.getProcessCpuLoad());
-        double systemCpuLoad = sanitizeCpuLoad(osBean.getSystemCpuLoad());
+        double systemCpuLoad = sanitizeCpuLoad(osBean.getCpuLoad());
         if (processCpuLoad <= 0 || systemCpuLoad <= 0) {
             return 0.0;
         }
