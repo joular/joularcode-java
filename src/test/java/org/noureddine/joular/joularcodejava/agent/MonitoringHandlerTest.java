@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.logging.Handler;
+import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
@@ -177,9 +178,16 @@ class MonitoringHandlerTest {
         doThrow(new RuntimeException("init failed")).when(mockPowerSource).initialize();
 
         handler = makeHandler(tempDir.toString());
-        startHandler();
-
-        boolean settled = handler.awaitStartup(3000);
+        Logger logger = Logger.getLogger(MonitoringHandler.class.getName());
+        Level oldLevel = logger.getLevel();
+        logger.setLevel(Level.OFF);
+        boolean settled;
+        try {
+            startHandler();
+            settled = handler.awaitStartup(3000);
+        } finally {
+            logger.setLevel(oldLevel);
+        }
         assertTrue(settled);
         assertFalse(handler.isStartupSuccessful());
         assertNotNull(handler.getStartupFailure());
@@ -200,9 +208,16 @@ class MonitoringHandlerTest {
         Files.writeString(blockingFile, "not a directory", StandardCharsets.UTF_8);
 
         handler = makeHandler(blockingFile.toString());
-        startHandler();
-
-        boolean settled = handler.awaitStartup(3000);
+        Logger logger = Logger.getLogger(MonitoringHandler.class.getName());
+        Level oldLevel = logger.getLevel();
+        logger.setLevel(Level.OFF);
+        boolean settled;
+        try {
+            startHandler();
+            settled = handler.awaitStartup(3000);
+        } finally {
+            logger.setLevel(oldLevel);
+        }
         assertTrue(settled);
         assertFalse(handler.isStartupSuccessful());
         assertNotNull(handler.getStartupFailure());

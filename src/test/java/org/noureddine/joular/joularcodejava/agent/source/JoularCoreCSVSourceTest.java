@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -204,7 +206,14 @@ class JoularCoreCSVSourceTest {
     void getCurrentPower_missingFile_returnsZero() {
         JoularCoreCSVSource source = new JoularCoreCSVSource(
                 tempDir.resolve("nonexistent.csv").toString());
-        assertEquals(0.0, source.getCurrentPower(), 1e-9);
+        Logger logger = Logger.getLogger(JoularCoreCSVSource.class.getName());
+        Level oldLevel = logger.getLevel();
+        logger.setLevel(Level.OFF);
+        try {
+            assertEquals(0.0, source.getCurrentPower(), 1e-9);
+        } finally {
+            logger.setLevel(oldLevel);
+        }
     }
 
     /**

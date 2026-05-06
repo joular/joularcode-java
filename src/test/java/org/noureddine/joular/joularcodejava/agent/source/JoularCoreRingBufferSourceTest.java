@@ -12,9 +12,9 @@
 package org.noureddine.joular.joularcodejava.agent.source;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.ByteBuffer;
@@ -45,11 +45,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * Total file size: {@code 8 + 5 × 48 = 248} bytes.
  *
  * <h2>Platform handling</h2>
- * <p>File-mapping tests are annotated {@code @DisabledOnOs(OS.WINDOWS)} because
- * {@code FileChannel.map(READ_ONLY)} holds a read lock on Windows that prevents
- * the test from writing the temp file and mapping it in the same JVM process.
- * A single Windows-specific test verifies the named shared-memory fallback path
- * using {@code @EnabledOnOs(OS.WINDOWS)}.
+ * <p>The temp directory is not deleted automatically because Windows can keep a
+ * mapped file locked until the JVM releases the {@code MappedByteBuffer}. This
+ * lets the file-mapping tests run on Windows instead of being reported as skipped.
  */
 class JoularCoreRingBufferSourceTest {
 
@@ -62,7 +60,7 @@ class JoularCoreRingBufferSourceTest {
     /** Total file size: 8-byte head counter followed by BUFFER_SIZE entries. */
     private static final int FILE_SIZE = 8 + BUFFER_SIZE * ENTRY_SIZE; // 248
 
-    @TempDir
+    @TempDir(cleanup = CleanupMode.NEVER)
     Path tempDir;
 
     /**
@@ -113,7 +111,6 @@ class JoularCoreRingBufferSourceTest {
      * therefore return 0.0 (the null-buffer fast-path) and not throw.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void close_setsBufferNull_subsequentGetReturnsZero() throws Exception {
         Path file = writeTempRingBuffer(1L, 0, 20.0);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -125,7 +122,7 @@ class JoularCoreRingBufferSourceTest {
     }
 
     // -------------------------------------------------------------------------
-    // File-mapping tests (skipped on Windows — see class Javadoc)
+    // File-mapping tests
     // -------------------------------------------------------------------------
 
     /**
@@ -135,7 +132,6 @@ class JoularCoreRingBufferSourceTest {
      * calculation.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_validHead1_returnsCpuPower() throws Exception {
         // head=1 → idx=(1-1)%5=0 → entry at offset 8, cpu_power at offset 16
         Path file = writeTempRingBuffer(1L, 0, 25.0);
@@ -150,7 +146,6 @@ class JoularCoreRingBufferSourceTest {
      * This verifies the modulo ring-slot arithmetic for non-zero indices.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_validHead3_returnsCorrectSlot() throws Exception {
         // head=3 → idx=(3-1)%5=2 → entry at offset 8+2*48=104, cpu_power at 112
         Path file = writeTempRingBuffer(3L, 2, 18.0);
@@ -165,7 +160,6 @@ class JoularCoreRingBufferSourceTest {
      * {@code lastKnownPower} (initially 0.0).
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_headZero_returnsZero() throws Exception {
         Path file = writeTempRingBuffer(0L, 0, 99.0);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -178,7 +172,6 @@ class JoularCoreRingBufferSourceTest {
      * and must be handled the same as zero — return 0.0 without throwing.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_headNegative_returnsZero() throws Exception {
         Path file = writeTempRingBuffer(-1L, 0, 10.0);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -192,7 +185,6 @@ class JoularCoreRingBufferSourceTest {
      * (0.0 on the first call) rather than propagating the bad reading.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_negativeCpuPower_returnsLastKnown() throws Exception {
         Path file = writeTempRingBuffer(1L, 0, -5.0);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -206,7 +198,6 @@ class JoularCoreRingBufferSourceTest {
      * {@code lastKnownPower} (0.0).
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_nanCpuPower_returnsLastKnown() throws Exception {
         Path file = writeTempRingBuffer(1L, 0, Double.NaN);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -221,7 +212,6 @@ class JoularCoreRingBufferSourceTest {
      * because the load-verify check (head1 == head2) passes on a static file.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void getCurrentPower_validThenInvalid_returnsLastKnownGoodValue() throws Exception {
         Path file = writeTempRingBuffer(1L, 0, 30.0);
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(file.toString());
@@ -238,7 +228,6 @@ class JoularCoreRingBufferSourceTest {
      * {@link Exception} so the agent can fail fast at startup.
      */
     @Test
-    @DisabledOnOs(OS.WINDOWS)
     void initialize_missingFile_throwsException() {
         JoularCoreRingBufferSource source = new JoularCoreRingBufferSource(
                 tempDir.resolve("does-not-exist.bin").toString());
