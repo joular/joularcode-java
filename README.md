@@ -1,7 +1,7 @@
 # <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> Joular Code - Java
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![Java](https://img.shields.io/badge/Java-11%2B-orange)](https://openjdk.java.net)
+[![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://openjdk.java.net)
 
 Joular Code - Java is a lightweight and efficient Java agent for monitoring the energy consumption of methods and execution branches at the source code level.
 
@@ -120,7 +120,7 @@ joular-core-ringbuffer-path=/dev/shm/joularcorering
 
 #### CSV file
 
-Joular Core can be configured to write power data to a CSV file. Joular Code - Java reads the latest row from that file each monitoring cycle. Use this when IPC is unavailable.
+Joular Core can be configured to write power data to a CSV file. Joular Code - Java reads the latest row from that file each monitoring cycle. Use this when IPC is unavailable. The parser expects Joular Core's simple comma-separated output where the first column is a numeric timestamp and the second column is CPU power in watts.
 
 ```properties
 power-source-type=csv
@@ -129,7 +129,7 @@ joular-core-csv-path=/path/to/joularcore-data.csv
 
 #### HTTP endpoint
 
-Reads power data from a JSON HTTP endpoint exposed by Joular Core. The response must contain a `cpu_power` field. Suitable for remote or containerized deployments.
+Reads power data from a trusted JSON HTTP endpoint exposed by Joular Core. The response must be a JSON object containing a top-level numeric `cpu_power` field. Suitable for remote or containerized deployments when the endpoint is controlled by you or your infrastructure.
 
 ```properties
 power-source-type=http
@@ -187,12 +187,12 @@ timestamp,branch,power_watts,energy_joules,interval_seconds
 - **"Joular Core ring buffer appears stale"** (`WARNING` log): Joular Core has stopped advancing the ring buffer, so confirm that the Joular Core process is still running and still writing data. Until that resumes, Joular Code - Java gives a power value of `0.0`.
 - **"Could not read power data from CSV: ..."** (`WARNING` log): the configured `joular-core-csv-path` does not exist. Check that Joular Core is running in CSV export mode and writing to the same path. The warning is logged only once until the file becomes available again.
 - **HTTP mode returns 0.0 power**: the HTTP endpoint must return a JSON object containing a `"cpu_power": <number>` key directly on the top-level object (not nested). Keys like `"last_cpu_power"` or `"cpu_power_limit"` are ignored.
-- **No rows in `methods-power-app.csv`**: either `methods-filtering-prefix` is unset (in which case rows still go to `methods-power-all.csv`), or the configured prefix does not match any fully-qualified method name in your application.
+- **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.
 
 ## :information_source: Notes
 
 - Joular Code - Java requires `com.sun.management.OperatingSystemMXBean` to measure process and system CPU load. This is available in all standard HotSpot JVMs (OpenJDK, Oracle JDK). Minimal or embedded JVMs that do not provide this class are not supported.
-- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, method-level energy attribution will be degraded.
+- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Core - Java will fail.
 - The agent's own monitoring thread is excluded from all energy measurements.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
 - The `NO_COLOR` environment variable disables ANSI color output in the agent banner.

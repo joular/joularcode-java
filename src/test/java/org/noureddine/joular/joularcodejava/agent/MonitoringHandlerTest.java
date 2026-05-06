@@ -26,7 +26,13 @@ import java.lang.management.ThreadMXBean;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -270,5 +276,66 @@ class MonitoringHandlerTest {
         handler.joinWithTimeout(100);
         long elapsed = System.currentTimeMillis() - start;
         assertTrue(elapsed < 1000, "joinWithTimeout should return quickly when thread not started");
+    }
+
+    @Test
+    void constructor_lowSampleRate_logsWarning() throws Exception {
+        Path propsFile = tempDir.resolve("joularcodejava.properties");
+        Properties props = new Properties();
+        props.setProperty("results-path", tempDir.toString());
+        props.setProperty("stack-monitoring-sample-rate", "1");
+        try (var w = Files.newBufferedWriter(propsFile, StandardCharsets.UTF_8)) {
+            props.store(w, null);
+        }
+        System.setProperty("joularcodejava.properties", propsFile.toString());
+
+        Logger logger = Logger.getLogger(MonitoringHandler.class.getName());
+        List<LogRecord> records = new ArrayList<>();
+        Handler capture = new Handler() {
+            @Override
+            public void publish(LogRecord record) {
+                records.add(record);
+            }
+
+            @Override
+            public void flush() {}
+
+            @Override
+            public void close() {}
+        };
+        logger.addHandler(capture);
+        try {
+            handler = new MonitoringHandler(new AgentProperties(), mockPowerSource, threadBean, osBean);
+        } finally {
+            logger.removeHandler(capture);
+        }
+
+        assertTrue(records.stream()
+                .anyMatch(record -> record.getMessage().contains("stack-monitoring-sample-rate")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Power attribution
+    // -------------------------------------------------------------------------
+
+    @Test
+    void calculateThreadPower_withCpuDeltas_usesCpuTimeProportions() {
+        Map<Long, Double> power = MonitoringHandler.calculateThreadPower(
+                Map.of(1L, 25L, 2L, 75L),
+                100.0,
+                40.0);
+
+        assertEquals(10.0, power.get(1L), 1e-9);
+        assertEquals(30.0, power.get(2L), 1e-9);
+    }
+
+    @Test
+    void calculateThreadPower_withoutCpuDeltas_returnsEmptyMap() {
+        Map<Long, Double> power = MonitoringHandler.calculateThreadPower(
+                Map.of(),
+                0.0,
+                80.0);
+
+        assertTrue(power.isEmpty());
     }
 }

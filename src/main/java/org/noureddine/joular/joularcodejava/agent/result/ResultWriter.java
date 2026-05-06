@@ -67,7 +67,7 @@ public class ResultWriter {
             double intervalSeconds,
             String fileName) {
         Path path = resultsDir.resolve(fileName);
-        logger.log(Level.INFO, () -> "Writing " + methodPower.size() + " methods to " + path);
+        logger.log(Level.FINE, () -> "Writing " + methodPower.size() + " methods to " + path);
 
         try {
             BufferedWriter writer = openWriters.get(fileName);

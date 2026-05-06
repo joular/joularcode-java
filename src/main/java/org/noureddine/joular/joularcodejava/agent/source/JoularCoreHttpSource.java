@@ -11,6 +11,7 @@
 
 package org.noureddine.joular.joularcodejava.agent.source;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -24,11 +25,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.ObjectReadContext;
+import tools.jackson.core.json.JsonFactory;
 
 public class JoularCoreHttpSource implements PowerSource {
 
     private static final Logger logger = Logger.getLogger(JoularCoreHttpSource.class.getName());
     private static final int MAX_BODY_BYTES = 64 * 1024;
+    private static final JsonFactory JSON_FACTORY = JsonFactory.builder().build();
 
     private final URI uri;
     private final HttpClient httpClient;
@@ -112,7 +118,7 @@ public class JoularCoreHttpSource implements PowerSource {
                 return lastKnownPower;
             }
 
-            Double parsed = extractCpuPower(new String(bytes, StandardCharsets.UTF_8));
+            Double parsed = extractCpuPower(bytes);
             if (parsed != null) {
                 lastKnownPower = parsed;
             }
@@ -124,70 +130,43 @@ public class JoularCoreHttpSource implements PowerSource {
     }
 
     static Double extractCpuPower(String json) {
-        int keyPos = findKey(json, "cpu_power");
-        if (keyPos == -1) {
+        if (json == null) {
             return null;
         }
-
-        int colonPos = json.indexOf(':', keyPos);
-        if (colonPos == -1) {
-            return null;
-        }
-
-        int i = colonPos + 1;
-
-        // skip whitespace
-        while (i < json.length() && Character.isWhitespace(json.charAt(i))) {
-            i++;
-        }
-
-        int start = i;
-
-        while (i < json.length()) {
-            char c = json.charAt(i);
-            if (Character.isDigit(c) || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E') {
-                i++;
-            } else {
-                break;
-            }
-        }
-
-        if (start == i) {
-            return null;
-        }
-
-        try {
-            double value = Double.parseDouble(json.substring(start, i));
-            if (!Double.isFinite(value) || value < 0) {
-                return null;
-            }
-            return value;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return extractCpuPower(json.getBytes(StandardCharsets.UTF_8));
     }
 
-    // Find a JSON key occurrence where the character preceding the opening quote
-    // is '{' or ',' (possibly with whitespace in between), so that keys like
-    // "last_cpu_power" do not match when searching for "cpu_power".
-    static int findKey(String json, String key) {
-        String quoted = "\"" + key + "\"";
-        int from = 0;
-        while (from < json.length()) {
-            int pos = json.indexOf(quoted, from);
-            if (pos == -1) {
-                return -1;
-            }
-            int j = pos - 1;
-            while (j >= 0 && Character.isWhitespace(json.charAt(j))) {
-                j--;
-            }
-            if (j < 0 || json.charAt(j) == '{' || json.charAt(j) == ',') {
-                return pos;
-            }
-            from = pos + quoted.length();
+    static Double extractCpuPower(byte[] json) {
+        if (json == null || json.length == 0) {
+            return null;
         }
-        return -1;
+
+        try (JsonParser parser = JSON_FACTORY.createParser(
+                ObjectReadContext.empty(),
+                new ByteArrayInputStream(json))) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return null;
+            }
+
+            while (parser.nextToken() == JsonToken.PROPERTY_NAME) {
+                String propertyName = parser.currentName();
+                JsonToken valueToken = parser.nextToken();
+                if ("cpu_power".equals(propertyName)) {
+                    if (valueToken != JsonToken.VALUE_NUMBER_INT && valueToken != JsonToken.VALUE_NUMBER_FLOAT) {
+                        return null;
+                    }
+                    double value = parser.getDoubleValue();
+                    if (!Double.isFinite(value) || value < 0) {
+                        return null;
+                    }
+                    return value;
+                }
+                parser.skipChildren();
+            }
+        } catch (Exception e) {
+            logger.log(Level.FINE, "Could not parse HTTP power JSON", e);
+        }
+        return null;
     }
 
     @Override

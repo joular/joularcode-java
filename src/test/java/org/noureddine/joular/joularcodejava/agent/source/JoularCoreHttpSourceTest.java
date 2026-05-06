@@ -11,7 +11,11 @@
 
 package org.noureddine.joular.joularcodejava.agent.source;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,11 +28,11 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li><b>Constructor validation</b> — the constructor parses and validates the
  *       configured URL at construction time so that misconfiguration is caught at
  *       agent startup rather than silently at runtime.</li>
- *   <li><b>Static JSON helpers</b> — {@code findKey} and {@code extractCpuPower}
- *       are package-private static methods that do all the JSON parsing. Testing
- *       them in isolation covers the full parsing logic including edge cases
- *       (substring key matches, scientific notation, non-numeric values) without
- *       requiring a mock HTTP client.</li>
+ *   <li><b>Static JSON helper</b> — {@code extractCpuPower} uses Jackson Core's
+ *       streaming parser, so tests cover valid payloads and rejection of malformed
+ *       or structurally unsupported payloads.</li>
+ *   <li><b>HTTP fallback behavior</b> — a local JDK HTTP server verifies status
+ *       and body-size handling without an external service.</li>
  * </ul>
  */
 class JoularCoreHttpSourceTest {
@@ -108,71 +112,6 @@ class JoularCoreHttpSourceTest {
     }
 
     // -------------------------------------------------------------------------
-    // findKey
-    // -------------------------------------------------------------------------
-
-    /**
-     * A key that appears at the very start of a JSON object (preceded only by
-     * the opening brace {@code {}) must be found and its position returned.
-     */
-    @Test
-    void findKey_atStartOfObject_returnsPosition() {
-        int pos = JoularCoreHttpSource.findKey("{\"cpu_power\":5}", "cpu_power");
-        assertTrue(pos >= 0);
-    }
-
-    /**
-     * A key that appears after another key-value pair (preceded by a comma)
-     * must also be located correctly.
-     */
-    @Test
-    void findKey_afterComma_returnsPosition() {
-        int pos = JoularCoreHttpSource.findKey("{\"other\":1,\"cpu_power\":5}", "cpu_power");
-        assertTrue(pos >= 0);
-    }
-
-    /**
-     * Whitespace between the comma separator and the opening quote of the key
-     * is allowed by JSON and must not prevent the key from being found.
-     */
-    @Test
-    void findKey_afterCommaWithWhitespace_returnsPosition() {
-        int pos = JoularCoreHttpSource.findKey("{\"other\":1, \"cpu_power\":5}", "cpu_power");
-        assertTrue(pos >= 0);
-    }
-
-    /**
-     * The key {@code "cpu_power"} is a suffix of {@code "last_cpu_power"}.
-     * Without the structural guard (checking that the character before the
-     * opening quote is {@code {}, {@code ,}, or whitespace following one of
-     * those), a naive {@code indexOf} would falsely match inside the longer
-     * key name. This test verifies the guard prevents that false positive.
-     */
-    @Test
-    void findKey_substringOfOtherKey_returnsMinusOne() {
-        // "last_cpu_power" contains "cpu_power" as a suffix; must not produce a match.
-        int pos = JoularCoreHttpSource.findKey("{\"last_cpu_power\":5}", "cpu_power");
-        assertEquals(-1, pos);
-    }
-
-    /**
-     * When the target key is entirely absent from the JSON, {@code -1} must
-     * be returned so the caller knows no value is available.
-     */
-    @Test
-    void findKey_missingKey_returnsMinusOne() {
-        assertEquals(-1, JoularCoreHttpSource.findKey("{\"other\":1}", "cpu_power"));
-    }
-
-    /**
-     * An empty JSON object contains no keys at all; {@code -1} must be returned.
-     */
-    @Test
-    void findKey_emptyJson_returnsMinusOne() {
-        assertEquals(-1, JoularCoreHttpSource.findKey("{}", "cpu_power"));
-    }
-
-    // -------------------------------------------------------------------------
     // extractCpuPower
     // -------------------------------------------------------------------------
 
@@ -213,8 +152,7 @@ class JoularCoreHttpSourceTest {
     }
 
     /**
-     * When the {@code "cpu_power"} key is absent, {@code findKey} returns
-     * {@code -1} and {@code extractCpuPower} must propagate that as
+     * When the {@code "cpu_power"} key is absent, the parser must return
      * {@code null}.
      */
     @Test
@@ -230,6 +168,35 @@ class JoularCoreHttpSourceTest {
     @Test
     void extractCpuPower_substringKeyOnly_returnsNull() {
         assertNull(JoularCoreHttpSource.extractCpuPower("{\"last_cpu_power\":5.0}"));
+    }
+
+    /**
+     * A nested {@code cpu_power} field is not part of the supported Joular Core
+     * HTTP contract. Only top-level numeric fields are accepted.
+     */
+    @Test
+    void extractCpuPower_nestedCpuPower_returnsNull() {
+        assertNull(JoularCoreHttpSource.extractCpuPower("{\"outer\":{\"cpu_power\":5.0}}"));
+    }
+
+    /**
+     * Malformed JSON must be treated the same as any transient HTTP payload
+     * problem: no value is parsed, so the caller can keep using last-known power.
+     */
+    @Test
+    void extractCpuPower_malformedJson_returnsNull() {
+        assertNull(JoularCoreHttpSource.extractCpuPower("{\"cpu_power\":"));
+    }
+
+    /**
+     * If a payload contains duplicate {@code cpu_power} fields, the first valid
+     * top-level value is used. Joular Core should not produce duplicates, but this
+     * deterministic behavior avoids order-dependent surprises.
+     */
+    @Test
+    void extractCpuPower_duplicateField_returnsFirstValue() {
+        assertEquals(4.0, JoularCoreHttpSource.extractCpuPower(
+                "{\"cpu_power\":4.0,\"cpu_power\":9.0}"), 1e-9);
     }
 
     /**
@@ -273,5 +240,82 @@ class JoularCoreHttpSourceTest {
     void extractCpuPower_multipleKeys_correctKeyReturned() {
         assertEquals(7.0, JoularCoreHttpSource.extractCpuPower(
                 "{\"gpu_power\":3.0,\"cpu_power\":7.0,\"total\":10.0}"), 1e-9);
+    }
+
+    // -------------------------------------------------------------------------
+    // HTTP fallback behavior
+    // -------------------------------------------------------------------------
+
+    @Test
+    void getCurrentPower_non200Status_returnsLastKnownPower() throws Exception {
+        HttpServer server = startServer(503, "{\"cpu_power\":9.0}");
+        try {
+            JoularCoreHttpSource source = new JoularCoreHttpSource(serverUrl(server));
+            try {
+                assertEquals(0.0, source.getCurrentPower(), 1e-9);
+            } finally {
+                source.close();
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void getCurrentPower_oversizedBody_returnsLastKnownPower() throws Exception {
+        String oversized = "{\"cpu_power\":1.0,\"padding\":\"" + "x".repeat(65 * 1024) + "\"}";
+        HttpServer server = startServer(200, oversized);
+        try {
+            JoularCoreHttpSource source = new JoularCoreHttpSource(serverUrl(server));
+            try {
+                assertEquals(0.0, source.getCurrentPower(), 1e-9);
+            } finally {
+                source.close();
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void getCurrentPower_validThenMalformed_returnsLastKnownPower() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        final int[] calls = {0};
+        server.createContext("/data", exchange -> {
+            calls[0]++;
+            byte[] response = (calls[0] == 1 ? "{\"cpu_power\":12.5}" : "{\"cpu_power\":")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            JoularCoreHttpSource source = new JoularCoreHttpSource(serverUrl(server));
+            try {
+                assertEquals(12.5, source.getCurrentPower(), 1e-9);
+                assertEquals(12.5, source.getCurrentPower(), 1e-9);
+            } finally {
+                source.close();
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static HttpServer startServer(int status, String body) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/data", exchange -> {
+            byte[] response = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private static String serverUrl(HttpServer server) {
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/data";
     }
 }

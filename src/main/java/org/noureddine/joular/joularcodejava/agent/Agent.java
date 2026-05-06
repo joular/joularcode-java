@@ -76,8 +76,9 @@ public class Agent {
                 threadBean.setThreadCpuTimeEnabled(true);
             }
         } else {
-            logger.log(Level.WARNING,
-                    "Thread CPU time is not supported on this JVM. Method-level energy attribution may be inaccurate.");
+            logger.log(Level.SEVERE,
+                    "Thread CPU time is not supported on this JVM. Joular Code - Java will not start.");
+            return;
         }
 
         OperatingSystemMXBean osBean = ManagementFactory.getOperatingSystemMXBean();

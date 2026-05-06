@@ -36,6 +36,7 @@ public class MonitoringHandler implements Runnable {
 
     private static final long NANOS_PER_MILLI = 1_000_000L;
     private static final long NANOS_PER_SECOND = 1_000_000_000L;
+    private static final long LOW_SAMPLE_RATE_WARNING_MS = 5L;
 
     private volatile boolean running = true;
     private volatile Thread monitoringThread;
@@ -59,6 +60,12 @@ public class MonitoringHandler implements Runnable {
         this.methodsFilteringPrefixes = properties.getMethodsFilteringPrefixes();
         this.threadBean = threadBean;
         this.osBean = osBean;
+        if (this.sampleRateMs < LOW_SAMPLE_RATE_WARNING_MS) {
+            logger.log(Level.WARNING,
+                    () -> "Configured stack-monitoring-sample-rate is " + this.sampleRateMs
+                            + " ms. Values below " + LOW_SAMPLE_RATE_WARNING_MS
+                            + " ms can noticeably increase monitoring overhead.");
+        }
     }
 
     public void stop() {
@@ -220,17 +227,10 @@ public class MonitoringHandler implements Runnable {
                         totalJHPower = 0.0;
                     }
 
-                    Map<Long, Double> threadPowerMap = new HashMap<>();
-                    if (totalDeltaCpuTime > 0) {
-                        for (Map.Entry<Long, Long> entry : intervalThreadsCpuTime.entrySet()) {
-                            long threadId = entry.getKey();
-                            long threadCpuTime = entry.getValue();
-
-                            // Power for each thread based on JVM power consumption and thread CPU usage
-                            double threadPower = totalJHPower * ((double) threadCpuTime / totalDeltaCpuTime);
-                            threadPowerMap.put(threadId, threadPower);
-                        }
-                    }
+                    Map<Long, Double> threadPowerMap = calculateThreadPower(
+                            intervalThreadsCpuTime,
+                            totalDeltaCpuTime,
+                            totalJHPower);
 
                     // 4. Save results
                     attributeAndSave(allStatsSamples, totalThreadSamples, threadPowerMap, nowMs, energyIntervalSeconds,
@@ -313,6 +313,24 @@ public class MonitoringHandler implements Runnable {
             }
         }
         return snapshot;
+    }
+
+    static Map<Long, Double> calculateThreadPower(Map<Long, Long> intervalThreadsCpuTime, double totalDeltaCpuTime,
+            double totalJHPower) {
+        Map<Long, Double> threadPowerMap = new HashMap<>();
+        if (totalJHPower <= 0 || !Double.isFinite(totalJHPower) || totalDeltaCpuTime <= 0) {
+            return threadPowerMap;
+        }
+
+        for (Map.Entry<Long, Long> entry : intervalThreadsCpuTime.entrySet()) {
+            long threadId = entry.getKey();
+            long threadCpuTime = entry.getValue();
+            if (threadCpuTime > 0) {
+                double threadPower = totalJHPower * ((double) threadCpuTime / totalDeltaCpuTime);
+                threadPowerMap.put(threadId, threadPower);
+            }
+        }
+        return threadPowerMap;
     }
 
     private void attributeAndSave(Map<Long, Map<String, Integer>> stats, Map<Long, Integer> totalThreadSamples,
