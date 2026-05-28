@@ -122,8 +122,10 @@ public class JoularCoreRingBufferSource implements PowerSource {
         double value = buffer.getDouble(offset + 8);
 
         long head2 = buffer.getLong(0);
-        if (head1 != head2) {
-            // Writer advanced mid-read; drop this sample rather than risk a torn value.
+        if (isTornRead(head1, head2)) {
+            // The writer wrapped around and overwrote the slot we just read; discard.
+            // A delta of < BUFFER_SIZE means the writer advanced to a different slot,
+            // so the data we read is still intact.
             trackStaleness(head2);
             return lastKnownPower;
         }
@@ -134,6 +136,19 @@ public class JoularCoreRingBufferSource implements PowerSource {
         }
         lastKnownPower = value;
         return value;
+    }
+
+    /**
+     * Returns {@code true} when the producer has advanced the head counter by
+     * {@code BUFFER_SIZE} or more positions between the two head reads, meaning
+     * it wrapped around and overwrote the slot that was being read.  A delta of
+     * less than {@code BUFFER_SIZE} means the producer wrote to a <em>different</em>
+     * slot and the data we read is still intact.
+     *
+     * <p>Package-private for unit testing.
+     */
+    static boolean isTornRead(long head1, long head2) {
+        return head2 - head1 >= BUFFER_SIZE;
     }
 
     private void trackStaleness(long currentHead) {

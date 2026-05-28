@@ -259,4 +259,37 @@ class JoularCoreRingBufferSourceTest {
                 "Local\\NonExistentJoularMapping_TestOnly_12345");
         assertThrows(Exception.class, source::initialize);
     }
+
+    // -------------------------------------------------------------------------
+    // Torn-read guard threshold tests
+    // -------------------------------------------------------------------------
+
+    /**
+     * When the producer advances the head by 1 (wrote one new entry to a
+     * <em>different</em> slot), the slot being read is still intact.
+     * {@code isTornRead} must return {@code false} for all deltas strictly less
+     * than {@code BUFFER_SIZE}.
+     *
+     * <p>With the old guard {@code head1 != head2} this condition would have
+     * returned {@code true} for any head change, causing valid readings to be
+     * discarded on every concurrent write.
+     */
+    @Test
+    void isTornRead_deltaLessThanBufferSize_returnsFalse() {
+        assertFalse(JoularCoreRingBufferSource.isTornRead(1L, 1L)); // delta = 0 (no change)
+        assertFalse(JoularCoreRingBufferSource.isTornRead(1L, 2L)); // delta = 1
+        assertFalse(JoularCoreRingBufferSource.isTornRead(1L, 5L)); // delta = BUFFER_SIZE - 1
+    }
+
+    /**
+     * When the producer advances the head by exactly {@code BUFFER_SIZE} (= 5) or
+     * more, it has wrapped around and overwritten the slot being read.
+     * {@code isTornRead} must return {@code true} so the caller discards the
+     * potentially corrupted sample.
+     */
+    @Test
+    void isTornRead_deltaAtOrAboveBufferSize_returnsTrue() {
+        assertTrue(JoularCoreRingBufferSource.isTornRead(1L, 6L));  // delta = BUFFER_SIZE
+        assertTrue(JoularCoreRingBufferSource.isTornRead(1L, 10L)); // delta > BUFFER_SIZE
+    }
 }
