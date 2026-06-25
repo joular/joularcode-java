@@ -116,6 +116,19 @@ class PowerSourceFactoryTest {
     }
 
     /**
+     * {@code power-source-type=rapl} must produce a {@link LinuxRaplPowerSource}
+     * instance. RAPL availability is checked during {@code initialize()}, so this
+     * construction test is platform-independent.
+     */
+    @Test
+    void getPowerSource_rapl_returnsLinuxRaplSource() throws Exception {
+        AgentProperties props = propsWithContent("power-source-type=rapl\n");
+        PowerSource source = PowerSourceFactory.getPowerSource(props);
+        assertNotNull(source);
+        assertInstanceOf(LinuxRaplPowerSource.class, source);
+    }
+
+    /**
      * The type string is normalised to lowercase before the switch statement,
      * so {@code "CSV"} (all-caps) must produce the same result as {@code "csv"}.
      */

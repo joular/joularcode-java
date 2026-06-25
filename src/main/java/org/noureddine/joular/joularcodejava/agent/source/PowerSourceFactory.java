@@ -29,6 +29,7 @@ public class PowerSourceFactory {
                 case "csv"        -> new JoularCoreCSVSource(properties.getJoularCoreCsvPath());
                 case "http"       -> new JoularCoreHttpSource(properties.getJoularCoreHttpUrl());
                 case "ringbuffer" -> new JoularCoreRingBufferSource(properties.getRingBufferPath());
+                case "rapl"       -> new LinuxRaplPowerSource();
                 default           -> {
                     logger.log(Level.SEVERE, () -> "Unknown power source type: " + type);
                     yield null;

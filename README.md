@@ -12,10 +12,11 @@ This project is part of [Joular Code](https://github.com/joular/joularcode), and
 - Monitor power consumption and energy of each method and execution branch at runtime
 - Works as a Java agent — no source code instrumentation or modification needed
 - Samples the JVM stack at high frequency (default: every 10 ms) and attributes energy every second
-- Supports three power data source backends from [Joular Core](https://github.com/joular/joularcore):
+- Supports four power data source backends:
   - Shared memory ring buffer (IPC) — lowest latency, recommended
   - CSV file — file-based polling
   - HTTP endpoint — remote or containerized setups
+  - Linux RAPL powercap PKG domain — direct hardware counter source
 - Generates CSV files with per-method and per-branch power (Watts) and energy (Joules)
 - Produces two output sets: one for all methods (including JDK internals), one filtered to your application packages
 - Configurable method filtering by package/class prefix to focus energy data on your code
@@ -38,7 +39,7 @@ Joular Code - Java runs as a Java instrumentation agent alongside your applicati
 
 - Java 21 or later
 - Apache Maven 3.6 or later
-- [Joular Core](https://github.com/joular/joularcore) running on the same machine
+- [Joular Core](https://github.com/joular/joularcore) for `ringbuffer`, `csv`, or `http` power sources, or Linux powercap/RAPL access for `rapl`
 
 ### Build
 
@@ -60,7 +61,7 @@ The JAR bundles all dependencies (including JNA) via the Maven Shade plugin, so 
 
 ## :bulb: Usage
 
-Joular Code - Java attaches to your Java application as a Java agent. You must have [Joular Core](https://github.com/joular/joularcore) running before starting your application.
+Joular Code - Java attaches to your Java application as a Java agent. Start [Joular Core](https://github.com/joular/joularcore) first when using `ringbuffer`, `csv`, or `http`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
 
 ### Basic usage
 
@@ -94,7 +95,7 @@ All configuration is done via a `joularcodejava.properties` file. Joular Code - 
 
 | Property | Default | Description |
 |---|---|---|
-| `power-source-type` | `ringbuffer` | Power data backend: `ringbuffer`, `csv`, or `http` |
+| `power-source-type` | `ringbuffer` | Power data backend: `ringbuffer`, `csv`, `http`, or `rapl` |
 | `joular-core-ringbuffer-path` | OS-dependent | Path to the Joular Core ring buffer (see below) |
 | `joular-core-csv-path` | `joularcore-data.csv` | Path to the Joular Core CSV output file |
 | `joular-core-http-url` | `http://localhost:8080/data` | URL of the Joular Core HTTP endpoint |
@@ -134,6 +135,14 @@ Reads power data from a trusted JSON HTTP endpoint exposed by Joular Core. The r
 ```properties
 power-source-type=http
 joular-core-http-url=http://localhost:8080/data
+```
+
+#### Linux RAPL powercap
+
+Reads CPU package power directly from the Linux powercap RAPL PKG domain at `/sys/class/powercap/intel-rapl/intel-rapl:0`. This source is Linux-only, uses `energy_uj` and `max_energy_range_uj`, and supports the PKG `package-0` domain only.
+
+```properties
+power-source-type=rapl
 ```
 
 ### Method filtering
@@ -187,6 +196,7 @@ timestamp,branch,power_watts,energy_joules,interval_seconds
 - **"Joular Core ring buffer appears stale"** (`WARNING` log): Joular Core has stopped advancing the ring buffer, so confirm that the Joular Core process is still running and still writing data. Until that resumes, Joular Code - Java gives a power value of `0.0`.
 - **"Could not read power data from CSV: ..."** (`WARNING` log): the configured `joular-core-csv-path` does not exist. Check that Joular Core is running in CSV export mode and writing to the same path. The warning is logged only once until the file becomes available again.
 - **HTTP mode returns 0.0 power**: the HTTP endpoint must return a JSON object containing a `"cpu_power": <number>` key directly on the top-level object (not nested). Keys like `"last_cpu_power"` or `"cpu_power_limit"` are ignored.
+- **RAPL mode fails at startup**: `power-source-type=rapl` is Linux-only and requires readable `/sys/class/powercap/intel-rapl/intel-rapl:0/name`, `energy_uj`, and `max_energy_range_uj` files for the `package-0` domain. Depending on the system, this may require elevated permissions.
 - **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.
 
 ## :information_source: Notes
