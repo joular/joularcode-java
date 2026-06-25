@@ -12,15 +12,15 @@
 package org.noureddine.joular.joularcodejava.agent.source;
 
 /**
- * Interface for different power data sources from Joular Core.
+ * Interface for different power data sources.
  *
  * <p>All implementations must follow the same failure semantics:
  * <ul>
  *   <li>Before any successful read, {@link #getCurrentPower()} returns {@code 0.0}.</li>
  *   <li>On a successful read, the returned value is cached as the "last known power".</li>
  *   <li>On transient errors (network blip, mid-write torn reads, parse failures, missing
- *       row), implementations return the last known power so the agent smooths over momentary
- *       producer unavailability.</li>
+ *       row, temporarily unreadable device data), implementations return the last known power
+ *       so the agent smooths over momentary producer unavailability.</li>
  *   <li>Implementations must reject {@code NaN}, infinite, and negative values returned by
  *       the underlying source — these are treated as transient errors.</li>
  *   <li>Returned values are CPU power in Watts and must be {@code &gt;= 0} and finite.</li>
