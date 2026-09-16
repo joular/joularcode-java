@@ -75,7 +75,7 @@ class PowerSourceFactoryTest {
     // -------------------------------------------------------------------------
 
     /**
-     * {@code power-source-type=csv} must produce a {@link JoularCoreCSVSource}
+     * {@code power-source-type=csv} must produce a {@link PowerJoularCsvSource}
      * instance. The CSV path falls back to the default value; no further
      * configuration is needed.
      */
@@ -84,27 +84,12 @@ class PowerSourceFactoryTest {
         AgentProperties props = propsWithContent("power-source-type=csv\n");
         PowerSource source = PowerSourceFactory.getPowerSource(props);
         assertNotNull(source);
-        assertInstanceOf(JoularCoreCSVSource.class, source);
-    }
-
-    /**
-     * {@code power-source-type=http} with a valid HTTP URL must produce a
-     * {@link JoularCoreHttpSource} instance. The source is closed after the
-     * assertion to release the internal executor thread.
-     */
-    @Test
-    void getPowerSource_http_returnsHttpSource() throws Exception {
-        AgentProperties props = propsWithContent(
-                "power-source-type=http\njoular-core-http-url=http://localhost:9999/data\n");
-        PowerSource source = PowerSourceFactory.getPowerSource(props);
-        assertNotNull(source);
-        assertInstanceOf(JoularCoreHttpSource.class, source);
-        source.close();
+        assertInstanceOf(PowerJoularCsvSource.class, source);
     }
 
     /**
      * {@code power-source-type=ringbuffer} must produce a
-     * {@link JoularCoreRingBufferSource} instance. The path falls back to the
+     * {@link PowerJoularRingBufferSource} instance. The path falls back to the
      * OS-appropriate default; no file needs to exist for construction.
      */
     @Test
@@ -112,7 +97,7 @@ class PowerSourceFactoryTest {
         AgentProperties props = propsWithContent("power-source-type=ringbuffer\n");
         PowerSource source = PowerSourceFactory.getPowerSource(props);
         assertNotNull(source);
-        assertInstanceOf(JoularCoreRingBufferSource.class, source);
+        assertInstanceOf(PowerJoularRingBufferSource.class, source);
     }
 
     /**
@@ -137,7 +122,7 @@ class PowerSourceFactoryTest {
         AgentProperties props = propsWithContent("power-source-type=CSV\n");
         PowerSource source = PowerSourceFactory.getPowerSource(props);
         assertNotNull(source);
-        assertInstanceOf(JoularCoreCSVSource.class, source);
+        assertInstanceOf(PowerJoularCsvSource.class, source);
     }
 
     // -------------------------------------------------------------------------
@@ -152,38 +137,6 @@ class PowerSourceFactoryTest {
     @Test
     void getPowerSource_unknownType_returnsNull() throws Exception {
         AgentProperties props = propsWithContent("power-source-type=grpc\n");
-        assertNull(PowerSourceFactory.getPowerSource(props));
-    }
-
-    /**
-     * When the HTTP URL has an invalid scheme (e.g., {@code ftp://}), the
-     * {@link JoularCoreHttpSource} constructor throws an
-     * {@link IllegalArgumentException}. The factory must catch it and return
-     * {@code null} so that the agent can fail fast with a clear log message.
-     */
-    @Test
-    void getPowerSource_invalidHttpUrl_returnsNull() throws Exception {
-        AgentProperties props = propsWithContent(
-                "power-source-type=http\njoular-core-http-url=ftp://bad-scheme\n");
-        assertNull(PowerSourceFactory.getPowerSource(props));
-    }
-
-    /**
-     * A URL without a scheme (e.g., {@code "localhost:8080"}) is parsed by
-     * {@code java.net.URI} as having scheme {@code "localhost"}, which is not
-     * {@code http} or {@code https}. The constructor throws
-     * {@link IllegalArgumentException} and the factory must return {@code null}.
-     *
-     * <p>Note: {@link AgentProperties} replaces a genuinely empty property value
-     * with its built-in default, so an empty {@code joular-core-http-url} would
-     * not reach this path. This test uses a non-empty but scheme-less value
-     * instead.
-     */
-    @Test
-    void getPowerSource_noSchemeUrl_returnsNull() throws Exception {
-        // "localhost:8080" parses as URI with scheme="localhost" (not http/https).
-        AgentProperties props = propsWithContent(
-                "power-source-type=http\njoular-core-http-url=localhost:8080\n");
         assertNull(PowerSourceFactory.getPowerSource(props));
     }
 }

@@ -22,6 +22,11 @@ import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/**
+ * Reads CPU package power from the Linux powercap RAPL interface, without PowerJoular.
+ *
+ * <p>This source reads the hardware itself rather than following an external producer, so the bounded cover described on {@link PowerSource} does not apply to it.
+ */
 public class LinuxRaplPowerSource implements PowerSource {
 
     private static final Logger logger = Logger.getLogger(LinuxRaplPowerSource.class.getName());

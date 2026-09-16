@@ -18,15 +18,25 @@ package org.noureddine.joular.joularcodejava.agent.source;
  * <ul>
  *   <li>Before any successful read, {@link #getCurrentPower()} returns {@code 0.0}.</li>
  *   <li>On a successful read, the returned value is cached as the "last known power".</li>
- *   <li>On transient errors (network blip, mid-write torn reads, parse failures, missing
- *       row, temporarily unreadable device data), implementations return the last known power
- *       so the agent smooths over momentary producer unavailability.</li>
+ *   <li>On transient errors (mid-write torn reads, parse failures, missing row, temporarily
+ *       unreadable device data), implementations return the last known power so the agent smooths
+ *       over momentary producer unavailability.</li>
+ *   <li>That cover is bounded. After a handful of consecutive unreadable cycles, implementations
+ *       backed by an external producer report {@code 0.0} rather than going on replaying a value
+ *       that is no longer true, and log a warning once. Zero means no energy is attributed for the
+ *       cycle, which is preferable to attributing energy that was never measured.</li>
  *   <li>Implementations must reject {@code NaN}, infinite, and negative values returned by
  *       the underlying source — these are treated as transient errors.</li>
  *   <li>Returned values are CPU power in Watts and must be {@code &gt;= 0} and finite.</li>
  * </ul>
  */
 public interface PowerSource {
+
+    /**
+     * How many consecutive unreadable cycles an external source (csv, ring buffer) covers with the last known value before reporting {@code 0.0}.
+     */
+    int MAX_STALE_CYCLES = 5;
+
     /**
      * Initialize the power source connection.
      *

@@ -12,11 +12,11 @@ This project is part of [Joular Code](https://github.com/joular/joularcode), and
 - Monitor power consumption and energy of each method and execution branch at runtime
 - Works as a Java agent — no source code instrumentation or modification needed
 - Samples the JVM stack at high frequency (default: every 10 ms) and attributes energy every second
-- Supports four power data source backends:
-  - Shared memory ring buffer (IPC) — lowest latency, recommended
-  - CSV file — file-based polling
-  - HTTP endpoint — remote or containerized setups
-  - Linux RAPL powercap PKG domain — direct hardware counter source
+- No runtime dependencies: the agent runs on the JDK alone
+- Supports three power data source backends:
+  - Shared memory ring buffer (IPC): lowest latency, recommended
+  - CSV file: file-based polling
+  - Linux RAPL powercap PKG domain: direct hardware counter source
 - Generates CSV files with per-method and per-branch power (Watts) and energy (Joules)
 - Produces two output sets: one for all methods (including JDK internals), one filtered to your application packages
 - Configurable method filtering by package/class prefix to focus energy data on your code
@@ -26,12 +26,12 @@ This project is part of [Joular Code](https://github.com/joular/joularcode), and
 
 Joular Code - Java runs as a Java instrumentation agent alongside your application. Every monitoring cycle (default: 1 second), it:
 
-1. **Samples the JVM stack** — every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, building sample counts for each call branch.
-2. **Measures thread CPU time** — it takes CPU-time snapshots at the start and end of each cycle using `ThreadMXBean`, computing how much CPU time each thread consumed during the window.
-3. **Reads system power** from Joular Core — the total CPU power in Watts for the current monitoring cycle.
-4. **Scales to process power** — it estimates the JVM process's share of CPU power using `(processCpuLoad / systemCpuLoad) * totalCpuPower`.
-5. **Attributes energy to methods** — each thread receives a fraction of process power proportional to its CPU time. Within each thread, power is further distributed to call branches proportionally to their sample counts.
-6. **Writes results** to CSV files — both power (W) and energy (J = W × interval) are recorded per branch per cycle.
+1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, building sample counts for each call branch.
+2. **Measures thread CPU time**: it takes CPU-time snapshots at the start and end of each cycle using `ThreadMXBean`, computing how much CPU time each thread consumed during the window.
+3. **Reads system power** from PowerJoular: the total CPU power in Watts for the current monitoring cycle.
+4. **Scales to process power**: it estimates the JVM process's share of CPU power using `(processCpuLoad / systemCpuLoad) * totalCpuPower`.
+5. **Attributes energy to methods**: each thread receives a fraction of process power proportional to its CPU time. Within each thread, power is further distributed to call branches proportionally to their sample counts.
+6. **Writes results** to CSV files: both power (W) and energy (J = W × interval) are recorded per branch per cycle.
 
 ## :package: Compilation and Installation
 
@@ -39,7 +39,7 @@ Joular Code - Java runs as a Java instrumentation agent alongside your applicati
 
 - Java 21 or later
 - Apache Maven 3.6 or later
-- [Joular Core](https://github.com/joular/joularcore) for `ringbuffer`, `csv`, or `http` power sources, or Linux powercap/RAPL access for `rapl`
+- [PowerJoular](https://github.com/joular/powerjoular) 2.0.0 or later for the `ringbuffer` and `csv` power sources, or Linux powercap/RAPL access for `rapl`
 
 ### Build
 
@@ -57,11 +57,13 @@ This produces a fat JAR at:
 target/joularcodejava-<version>.jar
 ```
 
-The JAR bundles all dependencies (including JNA) via the Maven Shade plugin, so no additional classpath setup is needed.
+The agent has no runtime dependencies, so the JAR holds nothing but its own classes and needs no additional classpath setup.
 
 ## :bulb: Usage
 
-Joular Code - Java attaches to your Java application as a Java agent. Start [Joular Core](https://github.com/joular/joularcore) first when using `ringbuffer`, `csv`, or `http`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
+Joular Code - Java attaches to your Java application as a Java agent. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
+
+PowerJoular measures the hardware through the [Joular Core](https://github.com/joular/joularcore) library. 
 
 ### Basic usage
 
@@ -95,10 +97,9 @@ All configuration is done via a `joularcodejava.properties` file. Joular Code - 
 
 | Property | Default | Description |
 |---|---|---|
-| `power-source-type` | `ringbuffer` | Power data backend: `ringbuffer`, `csv`, `http`, or `rapl` |
-| `joular-core-ringbuffer-path` | OS-dependent | Path to the Joular Core ring buffer (see below) |
-| `joular-core-csv-path` | `joularcore-data.csv` | Path to the Joular Core CSV output file |
-| `joular-core-http-url` | `http://localhost:8080/data` | URL of the Joular Core HTTP endpoint |
+| `power-source-type` | `ringbuffer` | Power data backend: `ringbuffer`, `csv`, or `rapl` |
+| `powerjoular-ringbuffer-path` | OS-dependent | Path to the PowerJoular ring buffer (see below) |
+| `powerjoular-csv-path` | `powerjoular-data.csv` | Path to the PowerJoular system CSV file |
 | `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds. Lower = more accurate but higher overhead |
 | `results-path` | `joular-code-java-results` | Directory where CSV result files are written |
 | `methods-filtering-prefix` | *(empty)* | Comma-separated list of package/class prefixes to filter app-specific methods (e.g., `com.example,org.myapp`) |
@@ -107,34 +108,35 @@ All configuration is done via a `joularcodejava.properties` file. Joular Code - 
 
 #### Ring buffer (recommended)
 
-The ring buffer backend reads power data from a POSIX shared memory or Windows named shared memory object written by Joular Core. This is the lowest-latency option and has minimal overhead.
+The ring buffer backend reads the shared memory area PowerJoular writes with `-r`. This is the lowest-latency option and has minimal overhead. The area is a plain file on every OS, mapped read-only by the agent.
 
 Default paths by OS:
 - **Linux**: `/dev/shm/joularcorering`
 - **macOS**: `/tmp/joularcorering`
-- **Windows**: `Local\JoularCoreRing`
+- **Windows**: `%PROGRAMDATA%\joularcorering`
 
 ```properties
 power-source-type=ringbuffer
-joular-core-ringbuffer-path=/dev/shm/joularcorering
+powerjoular-ringbuffer-path=/dev/shm/joularcorering
 ```
+
 
 #### CSV file
 
-Joular Core can be configured to write power data to a CSV file. Joular Code - Java reads the latest row from that file each monitoring cycle. Use this when IPC is unavailable. The parser expects Joular Core's simple comma-separated output where the first column is a numeric timestamp and the second column is CPU power in watts.
+PowerJoular writes power data to a CSV file with `-f`, which adds a row every second, or with `-o`, which keeps only the latest row and carries no header. Joular Code - Java reads the last row each monitoring cycle and supports both. Use this when the ring buffer is unavailable; `-o` is the better of the two here, since the file stays one row long.
+
+The file holding the power of the whole system has five columns:
+
+```
+Timestamp,CPU Usage,Total Power,CPU Power,GPU Power
+1756681930,0.2460,18.4500,15.2000,3.2500
+```
+
+The agent reads **CPU Power**, the fourth column. It recognises the file by how many columns its rows carry, so it reads both the form with a header and the headerless one `-o` writes.
 
 ```properties
 power-source-type=csv
-joular-core-csv-path=/path/to/joularcore-data.csv
-```
-
-#### HTTP endpoint
-
-Reads power data from a trusted JSON HTTP endpoint exposed by Joular Core. The response must be a JSON object containing a top-level numeric `cpu_power` field. Suitable for remote or containerized deployments when the endpoint is controlled by you or your infrastructure.
-
-```properties
-power-source-type=http
-joular-core-http-url=http://localhost:8080/data
+powerjoular-csv-path=/path/to/powerjoular-data.csv
 ```
 
 #### Linux RAPL powercap
@@ -193,16 +195,17 @@ timestamp,branch,power_watts,energy_joules,interval_seconds
 
 ## :warning: Troubleshooting
 
-- **"Joular Core ring buffer appears stale"** (`WARNING` log): Joular Core has stopped advancing the ring buffer, so confirm that the Joular Core process is still running and still writing data. Until that resumes, Joular Code - Java gives a power value of `0.0`.
-- **"Could not read power data from CSV: ..."** (`WARNING` log): the configured `joular-core-csv-path` does not exist. Check that Joular Core is running in CSV export mode and writing to the same path. The warning is logged only once until the file becomes available again.
-- **HTTP mode returns 0.0 power**: the HTTP endpoint must return a JSON object containing a `"cpu_power": <number>` key directly on the top-level object (not nested). Keys like `"last_cpu_power"` or `"cpu_power_limit"` are ignored.
+- **"No fresh power data ... for 5 cycles"** (`WARNING` log): PowerJoular has stopped writing, or is writing somewhere else. Confirm it is still running, with `-r` for the ring buffer or `-f`/`-o` for CSV. A brief gap is covered by the last value read; past five cycles the agent reports `0.0` and attributes no energy.
+- **"Could not open the PowerJoular ring buffer ..."** (`WARNING` log): the ring buffer memory area is not there yet. This is not fatal, the agent retries on every cycle, so starting the JVM before PowerJoular is fine. If it never clears, check `powerjoular-ringbuffer-path`.
+- **"Could not read power data from ..."** (`WARNING` log): the configured `powerjoular-csv-path` does not exist. Check that PowerJoular is running with `-f` or `-o` and writing to the same path. The warning is logged only once until the file appears.
+- **"... is the file PowerJoular writes for one monitored process"** (`SEVERE` log): the CSV has three columns, so it holds the power of a single process, which the agent would scale a second time. Point `powerjoular-csv-path` at the file for the whole system instead.
 - **RAPL mode fails at startup**: `power-source-type=rapl` is Linux-only and requires readable `/sys/class/powercap/intel-rapl/intel-rapl:0/name`, `energy_uj`, and `max_energy_range_uj` files for the `package-0` domain. Depending on the system, this may require elevated permissions.
 - **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.
 
 ## :information_source: Notes
 
 - Joular Code - Java requires `com.sun.management.OperatingSystemMXBean` to measure process and system CPU load. This is available in all standard HotSpot JVMs (OpenJDK, Oracle JDK). Minimal or embedded JVMs that do not provide this class are not supported.
-- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Core - Java will fail.
+- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Code - Java will fail.
 - The agent's own monitoring thread is excluded from all energy measurements.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
 - The `NO_COLOR` environment variable disables ANSI color output in the agent banner.

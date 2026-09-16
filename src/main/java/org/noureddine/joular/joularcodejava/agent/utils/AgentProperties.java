@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -57,25 +58,26 @@ public class AgentProperties {
         return getStringProperty("power-source-type", "ringbuffer");
     }
 
-    public String getJoularCoreCsvPath() {
-        return getStringProperty("joular-core-csv-path", "joularcore-data.csv");
+    public String getPowerJoularCsvPath() {
+        return getStringProperty("powerjoular-csv-path", "powerjoular-data.csv");
     }
 
-    public String getJoularCoreHttpUrl() {
-        return getStringProperty("joular-core-http-url", "http://localhost:8080/data");
-    }
-
-    public String getRingBufferPath() {
+    public String getPowerJoularRingBufferPath() {
         String defaultPath;
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
         if (os.contains("win")) {
-            defaultPath = "Local\\JoularCoreRing";
+            // PowerJoular puts the ring buffer under ProgramData so that any user can read it.
+            String programData = System.getenv("PROGRAMDATA");
+            if (programData == null || programData.trim().isEmpty()) {
+                programData = "C:\\ProgramData";
+            }
+            defaultPath = programData + "\\joularcorering";
         } else if (os.contains("mac")) {
             defaultPath = "/tmp/joularcorering";
         } else {
             defaultPath = "/dev/shm/joularcorering";
         }
-        return getStringProperty("joular-core-ringbuffer-path", defaultPath);
+        return getStringProperty("powerjoular-ringbuffer-path", defaultPath);
     }
 
     public long getSampleRateMs() {

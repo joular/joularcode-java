@@ -91,21 +91,12 @@ class AgentPropertiesTest {
     }
 
     /**
-     * The default CSV file path is {@code "joularcore-data.csv"}, resolved
+     * The default CSV file path is {@code "powerjoular-data.csv"}, resolved
      * relative to the agent's working directory.
      */
     @Test
     void defaults_csvPath_default() {
-        assertEquals("joularcore-data.csv", defaults().getJoularCoreCsvPath());
-    }
-
-    /**
-     * The default HTTP endpoint assumes a locally running Joular Core instance
-     * on the standard port.
-     */
-    @Test
-    void defaults_httpUrl_default() {
-        assertEquals("http://localhost:8080/data", defaults().getJoularCoreHttpUrl());
+        assertEquals("powerjoular-data.csv", defaults().getPowerJoularCsvPath());
     }
 
     /**
@@ -203,19 +194,7 @@ class AgentPropertiesTest {
     @Test
     void fromFile_csvPath_customValue() throws Exception {
         assertEquals("/data/power.csv",
-                withContent("joular-core-csv-path=/data/power.csv\n").getJoularCoreCsvPath());
-    }
-
-    /**
-     * A fully qualified HTTP URL — including scheme, host, port, and path —
-     * must be returned verbatim; no parsing or normalisation is applied
-     * at the properties level.
-     */
-    @Test
-    void fromFile_httpUrl_customValue() throws Exception {
-        assertEquals("http://192.168.1.1:9090/power",
-                withContent("joular-core-http-url=http://192.168.1.1:9090/power\n")
-                        .getJoularCoreHttpUrl());
+                withContent("powerjoular-csv-path=/data/power.csv\n").getPowerJoularCsvPath());
     }
 
     /**
@@ -271,7 +250,7 @@ class AgentPropertiesTest {
      * The default ring buffer path is determined at runtime by inspecting
      * {@code os.name}:
      * <ul>
-     *   <li>Windows → {@code "Local\JoularCoreRing"} (named file mapping)</li>
+     *   <li>Windows → {@code "%PROGRAMDATA%\joularcorering"} (a real file, readable by any user)</li>
      *   <li>macOS   → {@code "/tmp/joularcorering"}</li>
      *   <li>Linux   → {@code "/dev/shm/joularcorering"} (shared-memory filesystem)</li>
      * </ul>
@@ -279,13 +258,13 @@ class AgentPropertiesTest {
      * three CI environments.
      */
     @Test
-    void getRingBufferPath_default_isOsDependent() {
+    void getPowerJoularRingBufferPath_default_isOsDependent() {
         String os = System.getProperty("os.name").toLowerCase();
-        String path = defaults().getRingBufferPath();
+        String path = defaults().getPowerJoularRingBufferPath();
         assertNotNull(path);
         assertFalse(path.isEmpty());
         if (os.contains("win")) {
-            assertTrue(path.contains("JoularCoreRing"), "Windows path: " + path);
+            assertTrue(path.endsWith("\\joularcorering"), "Windows path: " + path);
         } else if (os.contains("mac")) {
             assertEquals("/tmp/joularcorering", path);
         } else {
@@ -298,8 +277,8 @@ class AgentPropertiesTest {
      * default, allowing the agent to point at a non-standard location.
      */
     @Test
-    void getRingBufferPath_customValue_returnsCustom() throws Exception {
+    void getPowerJoularRingBufferPath_customValue_returnsCustom() throws Exception {
         assertEquals("/custom/ring",
-                withContent("joular-core-ringbuffer-path=/custom/ring\n").getRingBufferPath());
+                withContent("powerjoular-ringbuffer-path=/custom/ring\n").getPowerJoularRingBufferPath());
     }
 }

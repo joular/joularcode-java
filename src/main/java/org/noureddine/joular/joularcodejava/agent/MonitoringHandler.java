@@ -258,8 +258,14 @@ public class MonitoringHandler implements Runnable {
     private double estimateProcessShare() {
         double processCpuLoad = sanitizeCpuLoad(osBean.getProcessCpuLoad());
         double systemCpuLoad = sanitizeCpuLoad(osBean.getCpuLoad());
-        if (processCpuLoad <= 0 || systemCpuLoad <= 0) {
+        if (processCpuLoad <= 0) {
             return 0.0;
+        }
+        if (systemCpuLoad <= 0) {
+            // The system CPU load could not be read while the JVM's own CPU load could.
+            // Falling back to the JVM's load in order to keep the cycle rather than discarding it.
+            // This means less accurate data, as it amounts to taking the machine as fully loaded, which under-states the share of the power the JVM is given rather than over-stating it.
+            return processCpuLoad;
         }
         return sanitizeCpuLoad(processCpuLoad / systemCpuLoad);
     }

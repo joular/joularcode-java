@@ -26,9 +26,8 @@ public class PowerSourceFactory {
         logger.log(Level.INFO, () -> "Selecting power source type: " + type);
         try {
             return switch (normalizedType) {
-                case "csv"        -> new JoularCoreCSVSource(properties.getJoularCoreCsvPath());
-                case "http"       -> new JoularCoreHttpSource(properties.getJoularCoreHttpUrl());
-                case "ringbuffer" -> new JoularCoreRingBufferSource(properties.getRingBufferPath());
+                case "csv"        -> new PowerJoularCsvSource(properties.getPowerJoularCsvPath());
+                case "ringbuffer" -> new PowerJoularRingBufferSource(properties.getPowerJoularRingBufferPath());
                 case "rapl"       -> new LinuxRaplPowerSource();
                 default           -> {
                     logger.log(Level.SEVERE, () -> "Unknown power source type: " + type);
