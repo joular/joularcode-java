@@ -12,7 +12,6 @@
 package org.noureddine.joular.joularcodejava.agent;
 
 import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +25,7 @@ import org.noureddine.joular.joularcodejava.agent.result.ResultWriter;
 import org.noureddine.joular.joularcodejava.agent.source.PowerSource;
 import org.noureddine.joular.joularcodejava.agent.utils.AgentProperties;
 import com.sun.management.OperatingSystemMXBean;
+import com.sun.management.ThreadMXBean;
 
 /**
  * Samples the stacks of the running threads and divides the power drawn over a window between the call branches that were seen on them.
@@ -77,16 +77,8 @@ public class MonitoringHandler implements Runnable {
     private final PowerSource powerSource;
     private final ResultWriter resultWriter;
     private final long sampleRateMs;
-    private final long sampleRateNs;
     private final List<String> methodsFilteringPrefixes;
-    private final boolean filteringMethods;
     private final ThreadMXBean threadBean;
-
-    /**
-     * The same bean when it offers the bulk CPU time accessor, which reads every thread in one call instead of one native transition per thread. Null when it does not.
-     */
-    private final com.sun.management.ThreadMXBean bulkThreadBean;
-
     private final OperatingSystemMXBean osBean;
     private final CountDownLatch startupLatch = new CountDownLatch(1);
     private volatile boolean startupSuccessful = false;
@@ -100,13 +92,8 @@ public class MonitoringHandler implements Runnable {
         this.powerSource = powerSource;
         this.resultWriter = new ResultWriter(properties.getResultsPath());
         this.sampleRateMs = Math.max(1L, properties.getSampleRateMs());
-        this.sampleRateNs = this.sampleRateMs * NANOS_PER_MILLI;
         this.methodsFilteringPrefixes = properties.getMethodsFilteringPrefixes();
-        this.filteringMethods = !this.methodsFilteringPrefixes.isEmpty();
         this.threadBean = threadBean;
-        this.bulkThreadBean = threadBean instanceof com.sun.management.ThreadMXBean sunThreadBean
-                ? sunThreadBean
-                : null;
         this.osBean = osBean;
         if (this.sampleRateMs < LOW_SAMPLE_RATE_WARNING_MS) {
             logger.log(Level.WARNING,
@@ -212,6 +199,7 @@ public class MonitoringHandler implements Runnable {
 
         // An absolute schedule: each sample is due at a fixed offset from the start of the window, so the time the stack dump takes is absorbed into the interval rather than added on top of it.
         // Sleeping for the sample rate after the dump instead, quietly turns a configured 10 ms into 10 ms plus the dump, halving the resolution on a JVM with many threads
+        long sampleRateNs = sampleRateMs * NANOS_PER_MILLI;
         long nextSampleNs = windowStartNs;
         int missedSamples = 0;
         boolean windowRanItsCourse = false;
@@ -239,7 +227,7 @@ public class MonitoringHandler implements Runnable {
 
         if (!windowRanItsCourse) {
             // The agent is shutting down and this window was cut off part way through.
-            // Its handful of samples cover a fraction of a second of a JVM that is already winding down, so attributing them would put a row in the results that looks like a cycle and is not:
+            // Its handful of samples cover a fraction of a second of a JVM that is already winding down, so attributing them would put a row in the results that looks like a cycle and is not.
             return;
         }
 
@@ -303,7 +291,7 @@ public class MonitoringHandler implements Runnable {
 
             samples.totalPerThread.merge(threadId, 1, Integer::sum);
 
-            if (filteringMethods) {
+            if (!methodsFilteringPrefixes.isEmpty()) {
                 StringBuilder app = new StringBuilder(estimatedBranchLength(stack));
                 String all = buildBranch(stack, app);
                 if (!all.isEmpty()) {
@@ -333,10 +321,8 @@ public class MonitoringHandler implements Runnable {
         // Presized: the default 16 characters would grow to a couple of kilobytes through about eight array copies for a stack of any depth
         StringBuilder branch = new StringBuilder(estimatedBranchLength(stack));
         for (int i = stack.length - 1; i >= 0; i--) {
-            if (branch.length() > 0) {
-                branch.append(';');
-            }
             StackTraceElement element = stack[i];
+            appendSeparator(branch);
             branch.append(element.getClassName()).append('.').append(element.getMethodName());
         }
         return branch.toString();
@@ -365,10 +351,14 @@ public class MonitoringHandler implements Runnable {
     }
 
     private static void append(StringBuilder branch, String methodName) {
+        appendSeparator(branch);
+        branch.append(methodName);
+    }
+
+    private static void appendSeparator(StringBuilder branch) {
         if (branch.length() > 0) {
             branch.append(';');
         }
-        branch.append(methodName);
     }
 
     /** What was seen during one monitoring window. */
@@ -428,33 +418,44 @@ public class MonitoringHandler implements Runnable {
                 + String.format(Locale.ROOT, "%.3f", intervalSeconds) + " s, "
                 + missedSamples + " overran the interval");
 
-        if (overrunWarningLogged || samplesTaken <= 0) {
-            return;
-        }
-        if ((double) missedSamples / samplesTaken < HIGH_OVERRUN_THRESHOLD) {
+        if (samplesTaken <= 0) {
             return;
         }
 
-        long achievedMs = Math.round(intervalSeconds * 1000.0 / samplesTaken);
-        logger.log(Level.WARNING,
-                () -> "The stack sampler cannot keep up with stack-monitoring-sample-rate="
-                        + sampleRateMs + " ms: " + samplesTaken + " samples were taken in the last"
-                        + " window, an effective rate of about " + achievedMs + " ms. Dumping the"
-                        + " stacks of this many threads costs more than the interval allows. Raise"
-                        + " the sample rate for an honest one, or accept the coarser data.");
-        overrunWarningLogged = true;
+        if ((double) missedSamples / samplesTaken >= HIGH_OVERRUN_THRESHOLD) {
+            if (!overrunWarningLogged) {
+                long achievedMs = Math.round(intervalSeconds * 1000.0 / samplesTaken);
+                logger.log(Level.WARNING,
+                        () -> "The stack sampler cannot keep up with stack-monitoring-sample-rate="
+                                + sampleRateMs + " ms: " + samplesTaken + " samples were taken in the last"
+                                + " window, an effective rate of about " + achievedMs + " ms. Dumping the"
+                                + " stacks of this many threads costs more than the interval allows. Raise"
+                                + " the sample rate for an honest one, or accept the coarser data.");
+                overrunWarningLogged = true;
+            }
+            return;
+        }
+        // Back within budget, so a later spell of overrunning is worth reporting again
+        overrunWarningLogged = false;
     }
 
     private void reportCoverage(double coverage) {
         logger.log(Level.FINE, () -> "Window coverage: " + coverage);
-        if (lowCoverageWarningLogged || coverage <= 0 || coverage >= LOW_COVERAGE_THRESHOLD) {
+        if (coverage <= 0) {
             return;
         }
 
-        logger.log(Level.WARNING,
-                () -> "Only " + Math.round(coverage * 100) + "% of this JVM's CPU time belonged to"
-                        + " threads that were sampled, so the power reported per method is a lower bound. Threads that are short lived, or virtual threads, which the JVM does not report here, are the usual causes. Another cause is a sample rate too coarse for the number of threads.");
-        lowCoverageWarningLogged = true;
+        if (coverage < LOW_COVERAGE_THRESHOLD) {
+            if (!lowCoverageWarningLogged) {
+                logger.log(Level.WARNING,
+                        () -> "Only " + Math.round(coverage * 100) + "% of this JVM's CPU time belonged to"
+                                + " threads that were sampled, so the power reported per method is a lower bound. Threads that are short lived, or virtual threads, which the JVM does not report here, are the usual causes. Another cause is a sample rate too coarse for the number of threads.");
+                lowCoverageWarningLogged = true;
+            }
+            return;
+        }
+        // Coverage recovered, so a later drop is worth reporting again
+        lowCoverageWarningLogged = false;
     }
 
     /** The power this JVM is drawing: the machine's CPU power times this JVM's share of the work. */
@@ -467,8 +468,7 @@ public class MonitoringHandler implements Runnable {
 
     /** The share of the machine's busy CPU time that belongs to this JVM */
     private double estimateProcessShare() {
-        // The bean's first reading is negative, which sanitizeCpuLoad turns into zero, so the first window attributes nothing and warms the bean for the ones after it.
-        // Agent.premain used to do that warming itself and held up the application's own main for a second doing it
+        // The bean's first reading is negative, which sanitizeCpuLoad turns into zero, so the first window attributes nothing and warms the bean for the ones after it
         double processCpuLoad = sanitizeCpuLoad(osBean.getProcessCpuLoad());
         double systemCpuLoad = sanitizeCpuLoad(osBean.getCpuLoad());
         if (processCpuLoad <= 0) {
@@ -504,25 +504,13 @@ public class MonitoringHandler implements Runnable {
      */
     private Map<Long, Long> snapshotThreadCpuTime(long excludedThreadId) {
         long[] ids = threadBean.getAllThreadIds();
-        Map<Long, Long> snapshot = new HashMap<>(Math.max(16, ids.length * 2));
+        // One call for every thread, rather than one native transition per thread
+        long[] times = threadBean.getThreadCpuTime(ids);
 
-        if (bulkThreadBean != null) {
-            // One call for every thread, rather than one native transition per thread
-            long[] times = bulkThreadBean.getThreadCpuTime(ids);
-            for (int i = 0; i < ids.length; i++) {
-                if (ids[i] != excludedThreadId && times[i] >= 0) {
-                    snapshot.put(ids[i], times[i]);
-                }
-            }
-        } else {
-            for (long id : ids) {
-                if (id == excludedThreadId) {
-                    continue;
-                }
-                long cpuTime = threadBean.getThreadCpuTime(id);
-                if (cpuTime >= 0) {
-                    snapshot.put(id, cpuTime);
-                }
+        Map<Long, Long> snapshot = new HashMap<>(Math.max(16, ids.length * 2));
+        for (int i = 0; i < ids.length; i++) {
+            if (ids[i] != excludedThreadId && times[i] >= 0) {
+                snapshot.put(ids[i], times[i]);
             }
         }
         return snapshot;

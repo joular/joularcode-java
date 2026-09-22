@@ -190,7 +190,7 @@ timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
 
 Power is split between threads by the CPU time each one used, and the denominator is every thread that used CPU, not only the ones that were caught in a sample.
 Power drawn by a thread the agent never sampled is therefore left unattributed rather than shared out over the threads it did see.
-`coverage` says how much of the JVM's CPU time is represented: at `1.0` everything was accounted for, and at `0.6` only 60% of what the JVM consumed are attribued to the observed threads at that timestamp.
+`coverage` says how much of the JVM's CPU time is represented: at `1.0` everything was accounted for, and at `0.6` only 60% of what the JVM consumed are attributed to the observed threads at that timestamp.
 Threads that are created and destroyed inside a single cycle are invisible here, because the JVM stops reporting a thread's CPU time once it has ended.
 
 ### Example output

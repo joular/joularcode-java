@@ -12,6 +12,7 @@
 package org.noureddine.joular.joularcodejava.agent;
 
 import com.sun.management.OperatingSystemMXBean;
+import com.sun.management.ThreadMXBean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,7 +23,6 @@ import org.noureddine.joular.joularcodejava.agent.source.PowerSource;
 import org.noureddine.joular.joularcodejava.agent.utils.AgentProperties;
 
 import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadMXBean;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,10 +79,12 @@ class MonitoringHandlerTest {
     PowerSource mockPowerSource;
 
     /**
-     * Real JDK thread bean. Cannot be mocked without Byte Buddy experimental mode
-     * due to module encapsulation in JDK 17+.
+     * Real JDK thread bean (com.sun.management flavour required by MonitoringHandler).
+     * Cannot be mocked without Byte Buddy experimental mode due to module
+     * encapsulation in JDK 17+.
      */
-    private final ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
+    private final ThreadMXBean threadBean =
+            (ThreadMXBean) ManagementFactory.getThreadMXBean();
 
     /**
      * Real JDK OS bean (com.sun.management flavour required by MonitoringHandler).

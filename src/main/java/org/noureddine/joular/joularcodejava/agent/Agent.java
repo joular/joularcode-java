@@ -14,7 +14,6 @@ package org.noureddine.joular.joularcodejava.agent;
 import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
-import java.lang.management.ThreadMXBean;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Locale;
@@ -70,7 +69,11 @@ public class Agent {
             return;
         }
 
-        ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
+        if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean threadBean)) {
+            logger.log(Level.SEVERE,
+                    "Unsupported JVM: requires com.sun.management.ThreadMXBean to read every thread's CPU time in one call. Joular Code - Java will not start.");
+            return;
+        }
         if (threadBean.isThreadCpuTimeSupported()) {
             if (!threadBean.isThreadCpuTimeEnabled()) {
                 threadBean.setThreadCpuTimeEnabled(true);
@@ -89,8 +92,7 @@ public class Agent {
         }
 
         // The OS bean reports its loads over the interval since the previous call, so the first reading is meaningless and comes back negative.
-        // It used to be warmed up here with two calls half a second apart, which delayed the application's own main by a full second on every start.
-        // The monitoring loop's first window does the same job for free: its share comes out as zero, so that window simply attributes nothing.
+        // The monitoring loop's first window absorbs that: its share comes out as zero, so that window simply attributes nothing.
 
         MonitoringHandler monitoringHandler = new MonitoringHandler(
                 properties,
