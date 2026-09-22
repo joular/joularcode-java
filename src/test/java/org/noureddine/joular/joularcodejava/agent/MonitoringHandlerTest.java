@@ -353,4 +353,91 @@ class MonitoringHandlerTest {
 
         assertTrue(power.isEmpty());
     }
+
+    // -------------------------------------------------------------------------
+    // attribute: which CPU time goes in the denominator, and what coverage says
+    // -------------------------------------------------------------------------
+
+    /**
+     * A thread that used CPU without ever being caught in a sample still belongs in the denominator.
+     * Leaving it out handed the whole of the JVM's power to the threads that were seen and so overstated every method on them.
+     */
+    @Test
+    void attribute_unsampledThreadStaysInTheDenominator() {
+        Map<Long, Integer> sampled = Map.of(1L, 10);
+        Map<Long, Long> start = Map.of(1L, 0L, 2L, 0L);
+        Map<Long, Long> end = Map.of(1L, 300L, 2L, 700L);
+
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(sampled, start, end);
+
+        assertEquals(1000L, attribution.totalCpuDeltaNs(), "both threads' CPU time counts");
+        assertEquals(Map.of(1L, 300L), attribution.sampledCpuDeltas(), "only the sampled one is paid");
+        assertEquals(0.3, attribution.coverage(), 1e-9);
+    }
+
+    /** With every CPU-using thread sampled, nothing is missing. */
+    @Test
+    void attribute_everyThreadSampled_coverageIsOne() {
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(
+                Map.of(1L, 5, 2L, 5), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 400L, 2L, 600L));
+
+        assertEquals(1.0, attribution.coverage(), 1e-9);
+        assertEquals(1000L, attribution.totalCpuDeltaNs());
+    }
+
+    /**
+     * A thread absent from the opening snapshot was started inside the window, so the whole of its
+     * counter was spent there. Thread ids are never reused, so this cannot pick up a predecessor's
+     * time.
+     */
+    @Test
+    void attribute_threadStartedMidWindow_countsAllOfItsCpuTime() {
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(
+                Map.of(7L, 3), Map.of(), Map.of(7L, 500L));
+
+        assertEquals(500L, attribution.totalCpuDeltaNs());
+        assertEquals(Map.of(7L, 500L), attribution.sampledCpuDeltas());
+        assertEquals(1.0, attribution.coverage(), 1e-9);
+    }
+
+    /** A thread whose counter did not move contributes nothing either way. */
+    @Test
+    void attribute_idleThreadIgnored() {
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(
+                Map.of(1L, 4), Map.of(1L, 100L, 2L, 900L), Map.of(1L, 600L, 2L, 900L));
+
+        assertEquals(500L, attribution.totalCpuDeltaNs());
+        assertEquals(1.0, attribution.coverage(), 1e-9, "the idle thread is not missing coverage");
+    }
+
+    /** No CPU used at all is not a division by zero. */
+    @Test
+    void attribute_noCpuUsed_coverageIsZero() {
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(
+                Map.of(1L, 4), Map.of(1L, 100L), Map.of(1L, 100L));
+
+        assertEquals(0L, attribution.totalCpuDeltaNs());
+        assertEquals(0.0, attribution.coverage(), 1e-9);
+        assertTrue(attribution.sampledCpuDeltas().isEmpty());
+    }
+
+    /**
+     * The point of the whole arrangement: what is handed out adds up to less than the JVM drew, by
+     * exactly the share that was never observed. The alternative, normalising over the sampled
+     * threads, would make the totals balance by inflating the methods that happened to be seen.
+     */
+    @Test
+    void calculateThreadPower_unobservedShareIsLeftUnattributed() {
+        MonitoringHandler.Attribution attribution = MonitoringHandler.attribute(
+                Map.of(1L, 10), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 250L, 2L, 750L));
+
+        Map<Long, Double> power = MonitoringHandler.calculateThreadPower(
+                attribution.sampledCpuDeltas(), attribution.totalCpuDeltaNs(), 80.0);
+
+        assertEquals(20.0, power.get(1L), 1e-9, "a quarter of the CPU time earns a quarter of the power");
+        double handedOut = power.values().stream().mapToDouble(Double::doubleValue).sum();
+        assertTrue(handedOut < 80.0, "the unsampled thread's 60 W is not shared out");
+        assertEquals(attribution.coverage() * 80.0, handedOut, 1e-9,
+                "what is attributed is exactly the covered share");
+    }
 }

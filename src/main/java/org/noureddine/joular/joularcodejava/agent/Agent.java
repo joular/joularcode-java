@@ -88,17 +88,9 @@ public class Agent {
             return;
         }
 
-        // Warm-up OS Bean to avoid initial negative readings
-        logger.log(Level.INFO, "Warming up OS bean...");
-        for (int i = 0; i < 2; i++) {
-            sunOsBean.getCpuLoad();
-            sunOsBean.getProcessCpuLoad();
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        // The OS bean reports its loads over the interval since the previous call, so the first reading is meaningless and comes back negative.
+        // It used to be warmed up here with two calls half a second apart, which delayed the application's own main by a full second on every start.
+        // The monitoring loop's first window does the same job for free: its share comes out as zero, so that window simply attributes nothing.
 
         MonitoringHandler monitoringHandler = new MonitoringHandler(
                 properties,

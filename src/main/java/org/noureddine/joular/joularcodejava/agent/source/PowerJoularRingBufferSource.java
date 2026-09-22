@@ -110,6 +110,13 @@ public class PowerJoularRingBufferSource implements PowerSource {
         return 0.0;
     }
 
+    @Override
+    public long cycleCounter() {
+        // PowerJoular raises the counter once it has written a cycle, so a change here is exactly the edge the agent wants to close its window on.
+        ByteBuffer area = this.buffer;
+        return area == null ? -1 : area.getLong(0);
+    }
+
     /**
      * Reads cpu_power from the newest complete entry.
      *

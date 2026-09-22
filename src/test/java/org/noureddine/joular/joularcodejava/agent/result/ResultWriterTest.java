@@ -179,11 +179,11 @@ class ResultWriterTest {
     void writeRuntimeMethods_newFile_writesHeaderThenData() throws Exception {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("com.A.method", 5.0), 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("com.A.method", 5.0), 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
-        assertEquals("timestamp,branch,power_watts,energy_joules,interval_seconds", lines.get(0));
+        assertEquals("timestamp,branch,power_watts,energy_joules,interval_seconds,coverage", lines.get(0));
         assertEquals(2, lines.size());
     }
 
@@ -202,7 +202,7 @@ class ResultWriterTest {
         Map<String, Double> map = new LinkedHashMap<>();
         map.put("A.zero", 0.0);
         map.put("B.positive", 3.0);
-        writer.writeRuntimeMethods(map, 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(map, 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -222,7 +222,7 @@ class ResultWriterTest {
         Map<String, Double> map = new LinkedHashMap<>();
         map.put("A.neg", -1.0);
         map.put("B.pos", 2.0);
-        writer.writeRuntimeMethods(map, 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(map, 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -240,7 +240,7 @@ class ResultWriterTest {
     void writeRuntimeMethods_energyEqualsPoworTimesInterval() throws Exception {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("m.method", 4.0), 1000L, 2.5, "out.csv");
+        writer.writeRuntimeMethods(Map.of("m.method", 4.0), 1000L, 2.5, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -265,7 +265,7 @@ class ResultWriterTest {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
         // 1/3 is an irrational decimal — ensures the formatter actually rounds at 9 places.
-        writer.writeRuntimeMethods(Map.of("m.m", 1.0 / 3.0), 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("m.m", 1.0 / 3.0), 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -284,8 +284,8 @@ class ResultWriterTest {
     void writeRuntimeMethods_appendsWithoutDuplicateHeader() throws Exception {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("A.m", 1.0), 1000L, 1.0, "out.csv");
-        writer.writeRuntimeMethods(Map.of("B.m", 2.0), 2000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("A.m", 1.0), 1000L, 1.0, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("B.m", 2.0), 2000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -310,11 +310,11 @@ class ResultWriterTest {
 
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("X.m", 5.0), 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("X.m", 5.0), 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         List<String> lines = Files.readAllLines(outFile, StandardCharsets.UTF_8);
-        assertEquals("timestamp,branch,power_watts,energy_joules,interval_seconds", lines.get(0));
+        assertEquals("timestamp,branch,power_watts,energy_joules,interval_seconds,coverage", lines.get(0));
     }
 
     /**
@@ -327,7 +327,7 @@ class ResultWriterTest {
     void writeRuntimeMethods_csvEscapeAppliedToKey() throws Exception {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("foo,bar", 3.0), 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("foo,bar", 3.0), 1000L, 1.0, 1.0, "out.csv");
         writer.close();
 
         String content = Files.readString(tempDir.resolve("out.csv"), StandardCharsets.UTF_8);
@@ -343,7 +343,7 @@ class ResultWriterTest {
     void close_isIdempotent() throws Exception {
         ResultWriter writer = new ResultWriter(tempDir.toString());
         writer.verifyWritable();
-        writer.writeRuntimeMethods(Map.of("A.m", 1.0), 1000L, 1.0, "out.csv");
+        writer.writeRuntimeMethods(Map.of("A.m", 1.0), 1000L, 1.0, 1.0, "out.csv");
         assertDoesNotThrow(() -> {
             writer.close();
             writer.close();

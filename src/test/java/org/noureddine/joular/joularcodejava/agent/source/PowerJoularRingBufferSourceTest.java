@@ -260,4 +260,29 @@ class PowerJoularRingBufferSourceTest {
         PowerJoularRingBufferSource source = new PowerJoularRingBufferSource("/nonexistent");
         assertDoesNotThrow(source::close);
     }
+
+    // -------------------------------------------------------------------------
+    // cycleCounter: the edge the agent closes its attribution window on
+    // -------------------------------------------------------------------------
+
+    /** Unattached, the source has no cycle to offer and the agent falls back to its own timer. */
+    @Test
+    void cycleCounter_notAttached_returnsMinusOne() throws Exception {
+        PowerJoularRingBufferSource source = new PowerJoularRingBufferSource(
+                tempDir.resolve("nonexistent").toString());
+        quietly(PowerJoularRingBufferSource.class, () -> {
+            source.initialize();
+            assertEquals(-1, source.cycleCounter());
+        });
+    }
+
+    /** Attached, it reports PowerJoular's counter, and follows it as cycles are written. */
+    @Test
+    void cycleCounter_attached_followsTheProducer() throws Exception {
+        PowerJoularRingBufferSource source = sourceFor(writeTempRingBuffer(4L, 3, 12.0));
+        assertEquals(4L, source.cycleCounter());
+
+        writeTempRingBuffer(5L, 4, 13.0);
+        assertEquals(5L, source.cycleCounter(), "a new cycle must be visible to the agent");
+    }
 }

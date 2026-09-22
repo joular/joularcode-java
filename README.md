@@ -174,7 +174,7 @@ Joular Code - Java writes results into the directory configured by `results-path
 Both files share the same schema:
 
 ```
-timestamp,branch,power_watts,energy_joules,interval_seconds
+timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
 ```
 
 | Column | Type | Description |
@@ -184,20 +184,32 @@ timestamp,branch,power_watts,energy_joules,interval_seconds
 | `power_watts` | double | Estimated power consumed by this branch during the cycle (W) |
 | `energy_joules` | double | Energy = power_watts × interval_seconds (J) |
 | `interval_seconds` | double | Duration of the monitoring cycle (s), typically ~1.0 |
+| `coverage` | double | The share of the JVM's CPU time during the cycle that belonged to threads the agent actually sampled, from 0.0 to 1.0 |
+
+#### What `coverage` means
+
+Power is split between threads by the CPU time each one used, and the denominator is every thread that used CPU, not only the ones that were caught in a sample.
+Power drawn by a thread the agent never sampled is therefore left unattributed rather than shared out over the threads it did see.
+`coverage` says how much of the JVM's CPU time is represented: at `1.0` everything was accounted for, and at `0.6` only 60% of what the JVM consumed are attribued to the observed threads at that timestamp.
+Threads that are created and destroyed inside a single cycle are invisible here, because the JVM stops reporting a thread's CPU time once it has ended.
 
 ### Example output
 
 ```
-timestamp,branch,power_watts,energy_joules,interval_seconds
-1746000000000,com.example.Main.main;com.example.Worker.compute,2.341500000,2.341500000,1.000000000
-1746000001000,com.example.Main.main;com.example.Worker.compute,2.158300000,2.158300000,1.000000000
+timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
+1746000000000,com.example.Main.main;com.example.Worker.compute,2.341500000,2.341500000,1.000000000,1.0000
+1746000001000,com.example.Main.main;com.example.Worker.compute,2.158300000,2.158300000,1.000000000,0.9974
 ```
+
+The cycle is aligned to PowerJoular when the ring buffer is used: the agent closes a cycle the moment PowerJoular publishes a measurement, so the stack samples and the power describe the same second. With the CSV or RAPL sources the agent keeps its own one second cycle instead.
 
 ## :warning: Troubleshooting
 
 - **"No fresh power data ... for 5 cycles"** (`WARNING` log): PowerJoular has stopped writing, or is writing somewhere else. Confirm it is still running, with `-r` for the ring buffer or `-f`/`-o` for CSV. A brief gap is covered by the last value read; past five cycles the agent reports `0.0` and attributes no energy.
 - **"Could not open the PowerJoular ring buffer ..."** (`WARNING` log): the ring buffer memory area is not there yet. This is not fatal, the agent retries on every cycle, so starting the JVM before PowerJoular is fine. If it never clears, check `powerjoular-ringbuffer-path`.
 - **"Could not read power data from ..."** (`WARNING` log): the configured `powerjoular-csv-path` does not exist. Check that PowerJoular is running with `-f` or `-o` and writing to the same path. The warning is logged only once until the file appears.
+- **"The stack sampler cannot keep up ..."** (`WARNING` log): dumping the stacks of this many threads costs more than `stack-monitoring-sample-rate` allows, so fewer samples were taken than configured. The message gives the rate actually achieved. Raise the sample rate for an honest figure, or accept the coarser data; the energy totals stay correct either way, they are just based on fewer samples.
+- **"Only N% of this JVM's CPU time belonged to threads that were sampled"** (`WARNING` log): see the `coverage` column above. The rows are a lower bound rather than wrong.
 - **"... is the file PowerJoular writes for one monitored process"** (`SEVERE` log): the CSV has three columns, so it holds the power of a single process, which the agent would scale a second time. Point `powerjoular-csv-path` at the file for the whole system instead.
 - **RAPL mode fails at startup**: `power-source-type=rapl` is Linux-only and requires readable `/sys/class/powercap/intel-rapl/intel-rapl:0/name`, `energy_uj`, and `max_energy_range_uj` files for the `package-0` domain. Depending on the system, this may require elevated permissions.
 - **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.

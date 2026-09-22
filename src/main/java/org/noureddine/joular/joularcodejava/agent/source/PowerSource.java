@@ -52,6 +52,21 @@ public interface PowerSource {
     double getCurrentPower();
 
     /**
+     * Counter incremented by the producer on each new measurement, or -1 if it has no such counter.
+     *
+     * <p>The agent ends its attribution window when this value changes, so the window covers the same time span as the producer's measurement.
+     * PowerJoular reports the average power over the second ending at T, so the stack samples in that window belong to the same second as the power they are charged with.
+     * If this returns -1, the agent uses its own one second timer instead, which can drift relative to the producer.
+     *
+     * <p>Called on every sample tick, so it must be cheap and must not block.
+     *
+     * @return the producer's cycle counter, or -1 when unknown
+     */
+    default long cycleCounter() {
+        return -1;
+    }
+
+    /**
      * Close the power source connection. Must be safe to call even if {@link #initialize()}
      * was never called or threw.
      */

@@ -26,7 +26,8 @@ import java.util.logging.Logger;
 public class ResultWriter {
 
     private static final Logger logger = Logger.getLogger(ResultWriter.class.getName());
-    private static final String CSV_HEADER = "timestamp,branch,power_watts,energy_joules,interval_seconds";
+    private static final String CSV_HEADER =
+            "timestamp,branch,power_watts,energy_joules,interval_seconds,coverage";
 
     private final Path resultsDir;
     private final Map<String, BufferedWriter> openWriters = new HashMap<>();
@@ -61,10 +62,16 @@ public class ResultWriter {
         }
     }
 
+    /**
+     * Writes one row per branch for a monitoring cycle.
+     *
+     * @param coverage the share of this JVM's CPU time that belonged to threads the agent actually sampled during the cycle. Below 1.0 the figures on these rows are a lower bound: the power of threads that were never sampled is left unattributed rather than shared out over the ones that were.
+     */
     public void writeRuntimeMethods(
             Map<String, Double> methodPower,
             long timestamp,
             double intervalSeconds,
+            double coverage,
             String fileName) {
         Path path = resultsDir.resolve(fileName);
         logger.log(Level.FINE, () -> "Writing " + methodPower.size() + " methods to " + path);
@@ -88,12 +95,13 @@ public class ResultWriter {
                     double energyJoules = powerWatts * intervalSeconds;
                     writer.write(String.format(
                             Locale.US,
-                            "%d,%s,%.9f,%.9f,%.9f",
+                            "%d,%s,%.9f,%.9f,%.9f,%.4f",
                             timestamp,
                             csvEscape(entry.getKey()),
                             powerWatts,
                             energyJoules,
-                            intervalSeconds));
+                            intervalSeconds,
+                            coverage));
                     writer.newLine();
                 }
             }

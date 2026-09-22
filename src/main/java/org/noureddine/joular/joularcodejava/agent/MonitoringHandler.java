@@ -15,10 +15,11 @@ import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Predicate;
+import java.util.concurrent.locks.LockSupport;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.noureddine.joular.joularcodejava.agent.result.ResultWriter;
@@ -27,8 +28,27 @@ import org.noureddine.joular.joularcodejava.agent.utils.AgentProperties;
 import com.sun.management.OperatingSystemMXBean;
 
 /**
- * Handles the monitoring loop: sampling at high frequency (10ms)
- * and computing branch-level attribution at lower frequency (1s by default).
+ * Samples the stacks of the running threads and divides the power drawn over a window between the call branches that were seen on them.
+ *
+ * <h2>The model</h2>
+ * <pre>
+ *   threadPower(t) = processPower x cpuDelta(t) / totalCpuDelta
+ *   branchPower(b) = threadPower(t) x samples(t, b) / totalSamples(t)
+ * </pre>
+ *
+ * <p>Power is split between threads by the CPU time each one used, and within a thread between branches by how often each was seen on its stack.
+ * Splitting between threads by CPU time rather than by sample count is what keeps a thread that was blocked in native I/O from being charged for the time it spent waiting: Java reports such a thread as {@code RUNNABLE} even though it is not on a processor, so it is sampled, but its CPU time barely moves.
+ *
+ * <p>The denominator is every thread that used CPU, not only the threads that were sampled.
+ * Power drawn by a thread never caught in a sample is therefore left unattributed rather than shared out over the threads that were.
+ *
+ * <h2>What this cannot see</h2>
+ * <ul>
+ *   <li><b>Threads that die inside a window.</b> {@code getThreadCpuTime} returns -1 once a thread has gone, so a thread that finishes its work mid window is absent from the closing snapshot and drops out of both the numerator and the denominator.
+ * Coverage therefore reads optimistically high in an application built on short lived threads.</li>
+ *   <li><b>Virtual threads.</b> {@code dumpAllThreads} reports platform threads only.</li>
+ *   <li><b>Where a thread is inside a window.</b> A sample says which branch a thread was on, not whether it was on a processor at that instant, so within one thread the samples taken while it was blocked still dilute the branches that were genuinely running.</li>
+ * </ul>
  */
 public class MonitoringHandler implements Runnable {
 
@@ -38,27 +58,55 @@ public class MonitoringHandler implements Runnable {
     private static final long NANOS_PER_SECOND = 1_000_000_000L;
     private static final long LOW_SAMPLE_RATE_WARNING_MS = 5L;
 
+    /** How long a window runs when the power source publishes no cycle of its own. */
+    private static final long DEFAULT_WINDOW_NS = 1000L * NANOS_PER_MILLI;
+
+    /**
+     * The longest a window may run while waiting for the power source to publish a cycle, so that a producer which has stopped cannot stretch one window out for ever (mainly for ring buffers).
+     */
+    private static final long MAX_WINDOW_NS = 2000L * NANOS_PER_MILLI;
+
+    /** Below this share of the JVM's CPU time being accounted for, the results are worth a warning. */
+    private static final double LOW_COVERAGE_THRESHOLD = 0.5;
+
+    /** Report a sampler that cannot keep up once it has missed this share of a window's samples. */
+    private static final double HIGH_OVERRUN_THRESHOLD = 0.25;
+
     private volatile boolean running = true;
     private volatile Thread monitoringThread;
     private final PowerSource powerSource;
     private final ResultWriter resultWriter;
     private final long sampleRateMs;
+    private final long sampleRateNs;
     private final List<String> methodsFilteringPrefixes;
-    private final long computationIntervalMs = 1000;
-    private final long computationIntervalNs = computationIntervalMs * NANOS_PER_MILLI;
+    private final boolean filteringMethods;
     private final ThreadMXBean threadBean;
+
+    /**
+     * The same bean when it offers the bulk CPU time accessor, which reads every thread in one call instead of one native transition per thread. Null when it does not.
+     */
+    private final com.sun.management.ThreadMXBean bulkThreadBean;
+
     private final OperatingSystemMXBean osBean;
     private final CountDownLatch startupLatch = new CountDownLatch(1);
     private volatile boolean startupSuccessful = false;
     private volatile Throwable startupFailure;
+
+    private boolean overrunWarningLogged = false;
+    private boolean lowCoverageWarningLogged = false;
 
     public MonitoringHandler(AgentProperties properties, PowerSource powerSource, ThreadMXBean threadBean,
             OperatingSystemMXBean osBean) {
         this.powerSource = powerSource;
         this.resultWriter = new ResultWriter(properties.getResultsPath());
         this.sampleRateMs = Math.max(1L, properties.getSampleRateMs());
+        this.sampleRateNs = this.sampleRateMs * NANOS_PER_MILLI;
         this.methodsFilteringPrefixes = properties.getMethodsFilteringPrefixes();
+        this.filteringMethods = !this.methodsFilteringPrefixes.isEmpty();
         this.threadBean = threadBean;
+        this.bulkThreadBean = threadBean instanceof com.sun.management.ThreadMXBean sunThreadBean
+                ? sunThreadBean
+                : null;
         this.osBean = osBean;
         if (this.sampleRateMs < LOW_SAMPLE_RATE_WARNING_MS) {
             logger.log(Level.WARNING,
@@ -130,114 +178,13 @@ public class MonitoringHandler implements Runnable {
                 logger.log(Level.SEVERE, "Failed to initialize monitoring loop", e);
                 return;
             } finally {
+                // Counted down before the first window, so that the application's own main is not held up while the operating system bean warms itself.
                 startupLatch.countDown();
             }
 
             while (running) {
                 try {
-                    long windowStartNs = System.nanoTime();
-                    Map<Long, Long> windowStartThreadCpuTime = snapshotThreadCpuTime(monitoringThreadId);
-
-                    // 1. Sample stack traces over the computation interval
-                    Map<Long, Map<String, Integer>> allStatsSamples = new HashMap<>();
-                    Map<Long, Map<String, Integer>> appStatsSamples = new HashMap<>();
-                    Map<Long, Integer> totalThreadSamples = new HashMap<>();
-
-                    while ((System.nanoTime() - windowStartNs) < computationIntervalNs && running) {
-                        // dumpAllThreads avoids the Map<Thread, StackTraceElement[]> wrapping that
-                        // Thread.getAllStackTraces() builds on top of the same native call.
-                        ThreadInfo[] threadInfos = threadBean.dumpAllThreads(false, false);
-                        for (ThreadInfo info : threadInfos) {
-                            if (info == null) {
-                                continue;
-                            }
-                            long threadId = info.getThreadId();
-                            if (threadId == monitoringThreadId) {
-                                continue;
-                            }
-                            if (info.getThreadState() == Thread.State.RUNNABLE) {
-                                StackTraceElement[] stack = info.getStackTrace();
-
-                                totalThreadSamples.merge(threadId, 1, Integer::sum);
-
-                                // Group 1: All branches
-                                String branchAll = getBranchString(stack, s -> true);
-                                if (!branchAll.isEmpty()) {
-                                    allStatsSamples.computeIfAbsent(threadId, k -> new HashMap<>()).merge(branchAll, 1,
-                                            Integer::sum);
-                                }
-
-                                // Group 2: App branches
-                                String branchApp = getBranchString(stack, this::matchesMethodFilter);
-                                if (!branchApp.isEmpty()) {
-                                    appStatsSamples.computeIfAbsent(threadId, k -> new HashMap<>()).merge(branchApp, 1,
-                                            Integer::sum);
-                                }
-                            }
-                        }
-                        try {
-                            Thread.sleep(sampleRateMs);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-
-                    long windowEndNs = System.nanoTime();
-                    long nowMs = System.currentTimeMillis();
-                    long measuredIntervalNs = windowEndNs - windowStartNs;
-                    double measuredIntervalSeconds = (double) measuredIntervalNs / NANOS_PER_SECOND;
-                    if (measuredIntervalSeconds <= 0) {
-                        continue;
-                    }
-                    // Use the effective attribution window duration for per-interval energy.
-                    // Joular Core power at T is a trailing 1-second average, so this is an
-                    // approximation when the loop duration differs from 1 second.
-                    double energyIntervalSeconds = measuredIntervalSeconds;
-
-                    // 2. Calculate thread CPU deltas strictly within the current attribution
-                    // window.
-                    Map<Long, Long> intervalThreadsCpuTime = new HashMap<>();
-                    double totalDeltaCpuTime = 0;
-
-                    // Use totalThreadSamples keys to identify active threads
-                    for (long threadId : totalThreadSamples.keySet()) {
-                        long currentCpuTime = threadBean.getThreadCpuTime(threadId);
-                        if (currentCpuTime < 0) {
-                            continue;
-                        }
-
-                        long startCpuTime = windowStartThreadCpuTime.getOrDefault(threadId, 0L);
-                        long delta = Math.max(0, currentCpuTime - startCpuTime);
-
-                        if (delta > 0) {
-                            intervalThreadsCpuTime.put(threadId, delta);
-                            totalDeltaCpuTime += delta;
-                        }
-                    }
-
-                    // 3. Get power and scale to process power
-                    double totalCpuPower = powerSource.getCurrentPower();
-                    double processShare = estimateProcessShare();
-                    double totalJHPower = 0.0;
-                    if (totalCpuPower > 0 && processShare > 0) {
-                        totalJHPower = totalCpuPower * processShare;
-                    }
-                    if (!Double.isFinite(totalJHPower) || totalJHPower < 0) {
-                        totalJHPower = 0.0;
-                    }
-
-                    Map<Long, Double> threadPowerMap = calculateThreadPower(
-                            intervalThreadsCpuTime,
-                            totalDeltaCpuTime,
-                            totalJHPower);
-
-                    // 4. Save results
-                    attributeAndSave(allStatsSamples, totalThreadSamples, threadPowerMap, nowMs, energyIntervalSeconds,
-                            "methods-power-all.csv");
-                    attributeAndSave(appStatsSamples, totalThreadSamples, threadPowerMap, nowMs, energyIntervalSeconds,
-                            "methods-power-app.csv");
-
+                    runOneWindow(monitoringThreadId);
                 } catch (Exception e) {
                     logger.log(Level.SEVERE, "Error during monitoring iteration, continuing.", e);
                 }
@@ -255,7 +202,273 @@ public class MonitoringHandler implements Runnable {
         }
     }
 
+    /** Samples for one monitoring window, then attributes that window's power and writes it out. */
+    private void runOneWindow(long monitoringThreadId) {
+        long windowStartNs = System.nanoTime();
+        Map<Long, Long> windowStartCpuTime = snapshotThreadCpuTime(monitoringThreadId);
+
+        SampleSet samples = new SampleSet();
+        long openingCycle = powerSource.cycleCounter();
+
+        // An absolute schedule: each sample is due at a fixed offset from the start of the window, so the time the stack dump takes is absorbed into the interval rather than added on top of it.
+        // Sleeping for the sample rate after the dump instead, quietly turns a configured 10 ms into 10 ms plus the dump, halving the resolution on a JVM with many threads
+        long nextSampleNs = windowStartNs;
+        int missedSamples = 0;
+        boolean windowRanItsCourse = false;
+
+        while (running && !Thread.currentThread().isInterrupted()) {
+            long now = System.nanoTime();
+            if (windowIsComplete(now - windowStartNs, openingCycle)) {
+                windowRanItsCourse = true;
+                break;
+            }
+
+            takeSample(samples, monitoringThreadId);
+
+            nextSampleNs += sampleRateNs;
+            long parkNs = nextSampleNs - System.nanoTime();
+            if (parkNs > 0) {
+                // parkNanos neither throws on interrupt nor clears the flag, so the loop condition above is what ends the window when stop() interrupts us
+                LockSupport.parkNanos(parkNs);
+            } else {
+                // The dump alone already overran the interval, so there is nothing left to wait for
+                missedSamples++;
+                nextSampleNs = System.nanoTime();
+            }
+        }
+
+        if (!windowRanItsCourse) {
+            // The agent is shutting down and this window was cut off part way through.
+            // Its handful of samples cover a fraction of a second of a JVM that is already winding down, so attributing them would put a row in the results that looks like a cycle and is not:
+            return;
+        }
+
+        long windowEndNs = System.nanoTime();
+        long nowMs = System.currentTimeMillis();
+        double intervalSeconds = (double) (windowEndNs - windowStartNs) / NANOS_PER_SECOND;
+        if (intervalSeconds <= 0) {
+            return;
+        }
+
+        reportSampling(missedSamples, samples.samplesTaken, intervalSeconds);
+
+        Map<Long, Long> windowEndCpuTime = snapshotThreadCpuTime(monitoringThreadId);
+        Attribution attribution = attribute(samples.totalPerThread, windowStartCpuTime, windowEndCpuTime);
+        reportCoverage(attribution.coverage());
+
+        double processPower = processPower();
+        Map<Long, Double> threadPower = calculateThreadPower(
+                attribution.sampledCpuDeltas(), attribution.totalCpuDeltaNs(), processPower);
+
+        attributeAndSave(samples.allBranches, samples.totalPerThread, threadPower,
+                nowMs, intervalSeconds, attribution.coverage(), "methods-power-all.csv");
+        attributeAndSave(samples.appBranches, samples.totalPerThread, threadPower,
+                nowMs, intervalSeconds, attribution.coverage(), "methods-power-app.csv");
+    }
+
+    /**
+     * Whether the window has completed.
+     *
+     * <p>When the power source publishes a cycle counter, the window ends the moment that counter moves, so that the agent's window and the producer's measurement (ring buffer mainly) cover the same stretch of time.
+     * The producer's value at T is the average over the second up to T, and closing the window on that same edge is what makes the samples describe that same second.
+     * Without a counter the window is simply a second long, which leaves the two free to drift apart by up to a second.
+     */
+    private boolean windowIsComplete(long elapsedNs, long openingCycle) {
+        if (openingCycle < 0) {
+            return elapsedNs >= DEFAULT_WINDOW_NS;
+        }
+        // The cap keeps a producer that has stopped from stretching one window out forever
+        return powerSource.cycleCounter() != openingCycle || elapsedNs >= MAX_WINDOW_NS;
+    }
+
+    /** One pass over every live thread, recording the branch each runnable one is on */
+    private void takeSample(SampleSet samples, long monitoringThreadId) {
+        // dumpAllThreads avoids the Map<Thread, StackTraceElement[]> wrapping that Thread.getAllStackTraces() builds on top of the same native call
+        ThreadInfo[] threadInfos = threadBean.dumpAllThreads(false, false);
+        samples.samplesTaken++;
+
+        for (ThreadInfo info : threadInfos) {
+            if (info == null) {
+                continue;
+            }
+            long threadId = info.getThreadId();
+            if (threadId == monitoringThreadId || info.getThreadState() != Thread.State.RUNNABLE) {
+                continue;
+            }
+
+            StackTraceElement[] stack = info.getStackTrace();
+            if (stack.length == 0) {
+                continue;
+            }
+
+            samples.totalPerThread.merge(threadId, 1, Integer::sum);
+
+            if (filteringMethods) {
+                StringBuilder app = new StringBuilder(estimatedBranchLength(stack));
+                String all = buildBranch(stack, app);
+                if (!all.isEmpty()) {
+                    samples.recordAll(threadId, all);
+                }
+                if (app.length() > 0) {
+                    samples.recordApp(threadId, app.toString());
+                }
+            } else {
+                // With no filter the two groupings hold the same branches, so the stack is walked once and the one string is shared between them.
+                String branch = buildBranch(stack);
+                if (!branch.isEmpty()) {
+                    samples.recordAll(threadId, branch);
+                    samples.recordApp(threadId, branch);
+                }
+            }
+        }
+    }
+
+    /**
+     * Builds the branch, oldest frame first, as the viewer expects.
+     *
+     * <p>The class and the method go straight into the builder rather than through a joined {@code "class.method"} string.
+     * Only the filter needs that string, and this is the path taken when there is no filter: one throwaway string per frame, per thread, per sample adds up to everal hundred thousand allocations a second on a JVM with many threads.
+     */
+    private static String buildBranch(StackTraceElement[] stack) {
+        // Presized: the default 16 characters would grow to a couple of kilobytes through about eight array copies for a stack of any depth
+        StringBuilder branch = new StringBuilder(estimatedBranchLength(stack));
+        for (int i = stack.length - 1; i >= 0; i--) {
+            if (branch.length() > 0) {
+                branch.append(';');
+            }
+            StackTraceElement element = stack[i];
+            branch.append(element.getClassName()).append('.').append(element.getMethodName());
+        }
+        return branch.toString();
+    }
+
+    /**
+     * Builds the full branch and, in the same walk of the stack, the branch of just those frames passing the method filter.
+     *
+     * <p>The filter matches on the whole {@code "class.method"} name, so here that string has to be built. It is then reused for both branches rather than formed twice.
+     */
+    private String buildBranch(StackTraceElement[] stack, StringBuilder filtered) {
+        StringBuilder all = new StringBuilder(estimatedBranchLength(stack));
+        for (int i = stack.length - 1; i >= 0; i--) {
+            StackTraceElement element = stack[i];
+            String methodName = element.getClassName() + "." + element.getMethodName();
+            append(all, methodName);
+            if (matchesMethodFilter(methodName)) {
+                append(filtered, methodName);
+            }
+        }
+        return all.toString();
+    }
+
+    private static int estimatedBranchLength(StackTraceElement[] stack) {
+        return Math.max(64, stack.length * 48);
+    }
+
+    private static void append(StringBuilder branch, String methodName) {
+        if (branch.length() > 0) {
+            branch.append(';');
+        }
+        branch.append(methodName);
+    }
+
+    /** What was seen during one monitoring window. */
+    private static final class SampleSet {
+        final Map<Long, Map<String, Integer>> allBranches = new HashMap<>();
+        final Map<Long, Map<String, Integer>> appBranches = new HashMap<>();
+        final Map<Long, Integer> totalPerThread = new HashMap<>();
+        int samplesTaken = 0;
+
+        void recordAll(long threadId, String branch) {
+            record(allBranches, threadId, branch);
+        }
+
+        void recordApp(long threadId, String branch) {
+            record(appBranches, threadId, branch);
+        }
+
+        private static void record(Map<Long, Map<String, Integer>> branches, long threadId, String branch) {
+            branches.computeIfAbsent(threadId, k -> new HashMap<>()).merge(branch, 1, Integer::sum);
+        }
+    }
+
+    /** How a monitoring window's CPU time divided between the threads that were sampled and the rest */
+    record Attribution(Map<Long, Long> sampledCpuDeltas, long totalCpuDeltaNs, double coverage) {
+    }
+
+    /**
+     * Works out how much CPU each thread used over the monitoring window, and how much of that belonged to threads that were actually sampled.
+     */
+    static Attribution attribute(Map<Long, Integer> sampledThreads, Map<Long, Long> startCpuTime,
+            Map<Long, Long> endCpuTime) {
+        Map<Long, Long> sampledDeltas = new HashMap<>();
+        long totalDeltaNs = 0;
+        long sampledDeltaNs = 0;
+
+        for (Map.Entry<Long, Long> entry : endCpuTime.entrySet()) {
+            long threadId = entry.getKey();
+            // A thread missing from the opening snapshot was started after the window began, so every nanosecond on its counter was spent inside the window and all of it counts.
+            // Safe because a thread id is never reused.
+            long delta = entry.getValue() - startCpuTime.getOrDefault(threadId, 0L);
+            if (delta <= 0) {
+                continue;
+            }
+            totalDeltaNs += delta;
+            if (sampledThreads.containsKey(threadId)) {
+                sampledDeltaNs += delta;
+                sampledDeltas.put(threadId, delta);
+            }
+        }
+
+        double coverage = totalDeltaNs > 0 ? (double) sampledDeltaNs / totalDeltaNs : 0.0;
+        return new Attribution(sampledDeltas, totalDeltaNs, coverage);
+    }
+
+    private void reportSampling(int missedSamples, int samplesTaken, double intervalSeconds) {
+        logger.log(Level.FINE, () -> "Window: " + samplesTaken + " samples over "
+                + String.format(Locale.ROOT, "%.3f", intervalSeconds) + " s, "
+                + missedSamples + " overran the interval");
+
+        if (overrunWarningLogged || samplesTaken <= 0) {
+            return;
+        }
+        if ((double) missedSamples / samplesTaken < HIGH_OVERRUN_THRESHOLD) {
+            return;
+        }
+
+        long achievedMs = Math.round(intervalSeconds * 1000.0 / samplesTaken);
+        logger.log(Level.WARNING,
+                () -> "The stack sampler cannot keep up with stack-monitoring-sample-rate="
+                        + sampleRateMs + " ms: " + samplesTaken + " samples were taken in the last"
+                        + " window, an effective rate of about " + achievedMs + " ms. Dumping the"
+                        + " stacks of this many threads costs more than the interval allows. Raise"
+                        + " the sample rate for an honest one, or accept the coarser data.");
+        overrunWarningLogged = true;
+    }
+
+    private void reportCoverage(double coverage) {
+        logger.log(Level.FINE, () -> "Window coverage: " + coverage);
+        if (lowCoverageWarningLogged || coverage <= 0 || coverage >= LOW_COVERAGE_THRESHOLD) {
+            return;
+        }
+
+        logger.log(Level.WARNING,
+                () -> "Only " + Math.round(coverage * 100) + "% of this JVM's CPU time belonged to"
+                        + " threads that were sampled, so the power reported per method is a lower bound. Threads that are short lived, or virtual threads, which the JVM does not report here, are the usual causes. Another cause is a sample rate too coarse for the number of threads.");
+        lowCoverageWarningLogged = true;
+    }
+
+    /** The power this JVM is drawing: the machine's CPU power times this JVM's share of the work. */
+    private double processPower() {
+        double totalCpuPower = powerSource.getCurrentPower();
+        double processShare = estimateProcessShare();
+        double power = totalCpuPower > 0 && processShare > 0 ? totalCpuPower * processShare : 0.0;
+        return Double.isFinite(power) && power > 0 ? power : 0.0;
+    }
+
+    /** The share of the machine's busy CPU time that belongs to this JVM */
     private double estimateProcessShare() {
+        // The bean's first reading is negative, which sanitizeCpuLoad turns into zero, so the first window attributes nothing and warms the bean for the ones after it.
+        // Agent.premain used to do that warming itself and held up the application's own main for a second doing it
         double processCpuLoad = sanitizeCpuLoad(osBean.getProcessCpuLoad());
         double systemCpuLoad = sanitizeCpuLoad(osBean.getCpuLoad());
         if (processCpuLoad <= 0) {
@@ -271,9 +484,6 @@ public class MonitoringHandler implements Runnable {
     }
 
     private boolean matchesMethodFilter(String methodName) {
-        if (methodsFilteringPrefixes.isEmpty()) {
-            return true;
-        }
         for (String prefix : methodsFilteringPrefixes) {
             if (methodName.startsWith(prefix)) {
                 return true;
@@ -289,58 +499,59 @@ public class MonitoringHandler implements Runnable {
         return Math.min(1.0, value);
     }
 
-    private String getBranchString(StackTraceElement[] stackTrace, Predicate<String> filter) {
-        StringBuilder sb = new StringBuilder();
-        boolean first = true;
-        for (int i = stackTrace.length - 1; i >= 0; i--) {
-            StackTraceElement element = stackTrace[i];
-            String methodName = element.getClassName() + "." + element.getMethodName();
-            if (!filter.test(methodName)) {
-                continue;
-            }
-            if (!first) {
-                sb.append(";");
-            }
-            sb.append(methodName);
-            first = false;
-        }
-        return sb.toString();
-    }
-
+    /**
+     * Every live thread's cumulative CPU time, the agent's own thread aside since its time is overhead rather than application work.
+     */
     private Map<Long, Long> snapshotThreadCpuTime(long excludedThreadId) {
-        Map<Long, Long> snapshot = new HashMap<>();
-        for (long threadId : threadBean.getAllThreadIds()) {
-            if (threadId == excludedThreadId) {
-                continue;
+        long[] ids = threadBean.getAllThreadIds();
+        Map<Long, Long> snapshot = new HashMap<>(Math.max(16, ids.length * 2));
+
+        if (bulkThreadBean != null) {
+            // One call for every thread, rather than one native transition per thread
+            long[] times = bulkThreadBean.getThreadCpuTime(ids);
+            for (int i = 0; i < ids.length; i++) {
+                if (ids[i] != excludedThreadId && times[i] >= 0) {
+                    snapshot.put(ids[i], times[i]);
+                }
             }
-            long cpuTime = threadBean.getThreadCpuTime(threadId);
-            if (cpuTime >= 0) {
-                snapshot.put(threadId, cpuTime);
+        } else {
+            for (long id : ids) {
+                if (id == excludedThreadId) {
+                    continue;
+                }
+                long cpuTime = threadBean.getThreadCpuTime(id);
+                if (cpuTime >= 0) {
+                    snapshot.put(id, cpuTime);
+                }
             }
         }
         return snapshot;
     }
 
-    static Map<Long, Double> calculateThreadPower(Map<Long, Long> intervalThreadsCpuTime, double totalDeltaCpuTime,
+    /**
+     * Divides the JVM's power between the sampled threads.
+     *
+     * <p>{@code totalDeltaCpuTime} covers every thread that used CPU, including those never caught in a sample, so their share is simply not handed out rather than being spread over the threads that were seen.
+     */
+    static Map<Long, Double> calculateThreadPower(Map<Long, Long> sampledCpuDeltas, double totalDeltaCpuTime,
             double totalJHPower) {
         Map<Long, Double> threadPowerMap = new HashMap<>();
         if (totalJHPower <= 0 || !Double.isFinite(totalJHPower) || totalDeltaCpuTime <= 0) {
             return threadPowerMap;
         }
 
-        for (Map.Entry<Long, Long> entry : intervalThreadsCpuTime.entrySet()) {
-            long threadId = entry.getKey();
+        for (Map.Entry<Long, Long> entry : sampledCpuDeltas.entrySet()) {
             long threadCpuTime = entry.getValue();
             if (threadCpuTime > 0) {
-                double threadPower = totalJHPower * ((double) threadCpuTime / totalDeltaCpuTime);
-                threadPowerMap.put(threadId, threadPower);
+                threadPowerMap.put(entry.getKey(), totalJHPower * (threadCpuTime / totalDeltaCpuTime));
             }
         }
         return threadPowerMap;
     }
 
     private void attributeAndSave(Map<Long, Map<String, Integer>> stats, Map<Long, Integer> totalThreadSamples,
-            Map<Long, Double> threadPowerMap, long timestampMs, double intervalSeconds, String fileName) {
+            Map<Long, Double> threadPowerMap, long timestampMs, double intervalSeconds, double coverage,
+            String fileName) {
         Map<String, Double> methodPowerTotals = new HashMap<>();
 
         for (Map.Entry<Long, Map<String, Integer>> threadEntry : stats.entrySet()) {
@@ -353,16 +564,14 @@ public class MonitoringHandler implements Runnable {
             if (totalSamples == null || totalSamples <= 0)
                 continue;
 
-            Map<String, Integer> methodCounts = threadEntry.getValue();
-
-            for (var methodEntry : methodCounts.entrySet()) {
+            for (var methodEntry : threadEntry.getValue().entrySet()) {
                 double methodPower = (methodEntry.getValue().doubleValue() / totalSamples) * threadPower;
                 methodPowerTotals.merge(methodEntry.getKey(), methodPower, Double::sum);
             }
         }
 
         if (!methodPowerTotals.isEmpty()) {
-            resultWriter.writeRuntimeMethods(methodPowerTotals, timestampMs, intervalSeconds, fileName);
+            resultWriter.writeRuntimeMethods(methodPowerTotals, timestampMs, intervalSeconds, coverage, fileName);
         }
     }
 }
