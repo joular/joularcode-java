@@ -51,19 +51,35 @@ public interface PowerSource {
      */
     double getCurrentPower();
 
+    /** How long an attribution window runs for a source that has no cadence of its own to follow
+     */
+    long DEFAULT_WINDOW_NANOS = 1_000_000_000L;
+
     /**
-     * Counter incremented by the producer on each new measurement, or -1 if it has no such counter.
+     * Called by the agent as it opens an attribution window, before the first stack sample.
      *
-     * <p>The agent ends its attribution window when this value changes, so the window covers the same time span as the producer's measurement.
-     * PowerJoular reports the average power over the second ending at T, so the stack samples in that window belong to the same second as the power they are charged with.
-     * If this returns -1, the agent uses its own one second timer instead, which can drift relative to the producer.
+     * <p>A source that closes its windows on its producer's cadence latches here whatever it needs to recognise the next measurement.
+     * The default does nothing, which is right for a source whose windows are simply a fixed length.
+     */
+    default void beginWindow() {
+        // Nothing to latch: the default policy is a fixed-length window
+    }
+
+    /**
+     * Whether the attribution window opened by the last {@link #beginWindow()}, and running for {@code elapsedNs} so far, should be closed now.
+     *
+     * <p>This is where a source decides how its own cadence maps onto the agent's windows, because it is the only party that knows that cadence.
+     * A source fed by an external producer that publishes an average over the second ending at T closes the window on the edge where that value lands, so the stack samples in the window describe the same second as the power they are charged with.
+     * It also owns any bound on that wait, since the sensible bound follows from the cadence.
+     * The default is the fixed {@link #DEFAULT_WINDOW_NANOS} window, which is right for a source read on demand rather than published to.
      *
      * <p>Called on every sample tick, so it must be cheap and must not block.
      *
-     * @return the producer's cycle counter, or -1 when unknown
+     * @param elapsedNs nanoseconds since {@link #beginWindow()} was called
+     * @return {@code true} to close the window now
      */
-    default long cycleCounter() {
-        return -1;
+    default boolean isWindowComplete(long elapsedNs) {
+        return elapsedNs >= DEFAULT_WINDOW_NANOS;
     }
 
     /**

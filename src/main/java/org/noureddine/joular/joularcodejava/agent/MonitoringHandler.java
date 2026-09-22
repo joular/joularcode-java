@@ -58,14 +58,6 @@ public class MonitoringHandler implements Runnable {
     private static final long NANOS_PER_SECOND = 1_000_000_000L;
     private static final long LOW_SAMPLE_RATE_WARNING_MS = 5L;
 
-    /** How long a window runs when the power source publishes no cycle of its own. */
-    private static final long DEFAULT_WINDOW_NS = 1000L * NANOS_PER_MILLI;
-
-    /**
-     * The longest a window may run while waiting for the power source to publish a cycle, so that a producer which has stopped cannot stretch one window out for ever (mainly for ring buffers).
-     */
-    private static final long MAX_WINDOW_NS = 2000L * NANOS_PER_MILLI;
-
     /** Below this share of the JVM's CPU time being accounted for, the results are worth a warning. */
     private static final double LOW_COVERAGE_THRESHOLD = 0.5;
 
@@ -195,7 +187,7 @@ public class MonitoringHandler implements Runnable {
         Map<Long, Long> windowStartCpuTime = snapshotThreadCpuTime(monitoringThreadId);
 
         SampleSet samples = new SampleSet();
-        long openingCycle = powerSource.cycleCounter();
+        powerSource.beginWindow();
 
         // An absolute schedule: each sample is due at a fixed offset from the start of the window, so the time the stack dump takes is absorbed into the interval rather than added on top of it.
         // Sleeping for the sample rate after the dump instead, quietly turns a configured 10 ms into 10 ms plus the dump, halving the resolution on a JVM with many threads
@@ -206,7 +198,7 @@ public class MonitoringHandler implements Runnable {
 
         while (running && !Thread.currentThread().isInterrupted()) {
             long now = System.nanoTime();
-            if (windowIsComplete(now - windowStartNs, openingCycle)) {
+            if (powerSource.isWindowComplete(now - windowStartNs)) {
                 windowRanItsCourse = true;
                 break;
             }
@@ -252,21 +244,6 @@ public class MonitoringHandler implements Runnable {
                 nowMs, intervalSeconds, attribution.coverage(), "methods-power-all.csv");
         attributeAndSave(samples.appBranches, samples.totalPerThread, threadPower,
                 nowMs, intervalSeconds, attribution.coverage(), "methods-power-app.csv");
-    }
-
-    /**
-     * Whether the window has completed.
-     *
-     * <p>When the power source publishes a cycle counter, the window ends the moment that counter moves, so that the agent's window and the producer's measurement (ring buffer mainly) cover the same stretch of time.
-     * The producer's value at T is the average over the second up to T, and closing the window on that same edge is what makes the samples describe that same second.
-     * Without a counter the window is simply a second long, which leaves the two free to drift apart by up to a second.
-     */
-    private boolean windowIsComplete(long elapsedNs, long openingCycle) {
-        if (openingCycle < 0) {
-            return elapsedNs >= DEFAULT_WINDOW_NS;
-        }
-        // The cap keeps a producer that has stopped from stretching one window out forever
-        return powerSource.cycleCounter() != openingCycle || elapsedNs >= MAX_WINDOW_NS;
     }
 
     /** One pass over every live thread, recording the branch each runnable one is on */

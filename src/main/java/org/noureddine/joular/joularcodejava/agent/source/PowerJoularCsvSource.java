@@ -32,6 +32,8 @@ import java.util.logging.Logger;
  * <p>{@code -f} adds a row every second and starts the file with the header. {@code -o} rewrites the file every second with the latest row only and no header, which is the better option here. Both are supported: the file is recognised by how many columns its rows carry, so the header is only ever skipped over and never has to be parsed.
  *
  * <p>Monitoring a process makes PowerJoular write a second, three column file holding the power of that process alone. That file is rejected here.
+ *
+ * <p>PowerJoular writes here once a second, so this source does have a cadence of its own, but it keeps the default fixed window all the same: recognising the edge would mean parsing the file on every sample tick, and {@link PowerSource#isWindowComplete(long)} has to stay cheap. The agent's windows and the rows therefore drift by up to a second relative to each other, which is the price of reading this format. The ring buffer publishes a counter that can be read without parsing, so it aligns properly.
  */
 public class PowerJoularCsvSource implements PowerSource {
 

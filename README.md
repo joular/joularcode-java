@@ -201,7 +201,7 @@ timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
 1746000001000,com.example.Main.main;com.example.Worker.compute,2.158300000,2.158300000,1.000000000,0.9974
 ```
 
-The cycle is aligned to PowerJoular when the ring buffer is used: the agent closes a cycle the moment PowerJoular publishes a measurement, so the stack samples and the power describe the same second. With the CSV or RAPL sources the agent keeps its own one second cycle instead.
+Each power source decides when a cycle closes, because each one knows its own cadence. With the ring buffer the agent closes a cycle the moment PowerJoular publishes a measurement, so the stack samples and the power describe the same second; if PowerJoular stops publishing, the agent says so once and falls back to a fixed one second cycle until it returns. The CSV and RAPL sources always use that fixed one second cycle: RAPL has no cycle of its own, and recognising the CSV's would mean re-parsing the file on every stack sample.
 
 ## :warning: Troubleshooting
 
@@ -210,6 +210,7 @@ The cycle is aligned to PowerJoular when the ring buffer is used: the agent clos
 - **"Could not read power data from ..."** (`WARNING` log): the configured `powerjoular-csv-path` does not exist. Check that PowerJoular is running with `-f` or `-o` and writing to the same path. The warning is logged only once until the file appears.
 - **"The stack sampler cannot keep up ..."** (`WARNING` log): dumping the stacks of this many threads costs more than `stack-monitoring-sample-rate` allows, so fewer samples were taken than configured. The message gives the rate actually achieved. Raise the sample rate for an honest figure, or accept the coarser data; the energy totals stay correct either way, they are just based on fewer samples.
 - **"Only N% of this JVM's CPU time belonged to threads that were sampled"** (`WARNING` log): see the `coverage` column above. The rows are a lower bound rather than wrong.
+- **"... has published no new cycle for 2000 ms"** (`WARNING` log): PowerJoular's ring buffer counter has stopped moving, so the agent gave up aligning its cycles to it and went back to a fixed one second cycle. Results keep coming at the usual rate, but each cycle and the power charged to it may describe slightly different seconds. Check PowerJoular is still running with `-r`; the agent logs again at `INFO` when it starts publishing and the cycles realign.
 - **"... is the file PowerJoular writes for one monitored process"** (`SEVERE` log): the CSV has three columns, so it holds the power of a single process, which the agent would scale a second time. Point `powerjoular-csv-path` at the file for the whole system instead.
 - **RAPL mode fails at startup**: `power-source-type=rapl` is Linux-only and requires readable `/sys/class/powercap/intel-rapl/intel-rapl:0/name`, `energy_uj`, and `max_energy_range_uj` files for the `package-0` domain. Depending on the system, this may require elevated permissions.
 - **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.

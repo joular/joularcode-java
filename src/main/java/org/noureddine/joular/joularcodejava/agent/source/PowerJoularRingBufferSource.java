@@ -66,12 +66,24 @@ public class PowerJoularRingBufferSource implements PowerSource {
      */
     static final long MAX_ENTRY_AGE_SECONDS = 10;
 
+    /**
+     * The longest a window waits for the next cycle before giving up on aligning to PowerJoular.
+     * It writes once a second, so twice that is already well past due.
+     */
+    static final long MAX_WINDOW_NANOS = 2_000_000_000L;
+
     private final String path;
 
     private volatile ByteBuffer buffer;
     private double lastKnownPower = 0.0;
     private int staleCycles = 0;
     private boolean attachWarningLogged = false;
+
+    /** The counter as it stood when the current window opened, or -1 when there was nothing to follow. */
+    private long windowOpeningCycle = -1;
+
+    /** Set once the producer has missed its cycle, so windows stop waiting on a counter that is not moving. */
+    private boolean producerStalled = false;
 
     public PowerJoularRingBufferSource(String path) {
         this.path = path;
@@ -111,10 +123,61 @@ public class PowerJoularRingBufferSource implements PowerSource {
     }
 
     @Override
-    public long cycleCounter() {
-        // PowerJoular raises the counter once it has written a cycle, so a change here is exactly the edge the agent wants to close its window on.
+    public void beginWindow() {
+        windowOpeningCycle = headCounter();
+    }
+
+    /**
+     * Closes the window on the edge where PowerJoular publishes its next cycle, so the stack samples in the window describe the same second as the power charged to them.
+     *
+     * <p>If that edge does not arrive within {@link #MAX_WINDOW_NANOS} the producer has stopped, and waiting on it would stretch every window from then on.
+     * The source says so once and falls back to the plain fixed window until the counter moves again, so a dead PowerJoular costs the alignment rather than the cadence.
+     */
+    @Override
+    public boolean isWindowComplete(long elapsedNs) {
+        if (windowOpeningCycle <= 0) {
+            // Not attached, or PowerJoular has yet to write its first cycle: there is no edge to follow
+            return elapsedNs >= DEFAULT_WINDOW_NANOS;
+        }
+
+        if (headCounter() != windowOpeningCycle) {
+            markProducerPublishing();
+            return true;
+        }
+
+        if (producerStalled) {
+            return elapsedNs >= DEFAULT_WINDOW_NANOS;
+        }
+
+        if (elapsedNs >= MAX_WINDOW_NANOS) {
+            markProducerStalled();
+            return true;
+        }
+        return false;
+    }
+
+    /** PowerJoular raises the counter once it has written a cycle, so a change is a published measurement. */
+    private long headCounter() {
         ByteBuffer area = this.buffer;
         return area == null ? -1 : area.getLong(0);
+    }
+
+    private void markProducerStalled() {
+        if (!producerStalled) {
+            producerStalled = true;
+            logger.log(Level.WARNING,
+                    () -> "The PowerJoular ring buffer " + path + " has published no new cycle for "
+                            + MAX_WINDOW_NANOS / 1_000_000L + " ms, so monitoring windows are no longer aligned to it and fall back to a fixed "
+                            + DEFAULT_WINDOW_NANOS / 1_000_000L + " ms. Is PowerJoular stillrunning  with -r? Results stay on their usual cadence, but each window and the power charged to it may now describe slightly different seconds.");
+        }
+    }
+
+    private void markProducerPublishing() {
+        if (producerStalled) {
+            producerStalled = false;
+            logger.log(Level.INFO,
+                    () -> "The PowerJoular ring buffer " + path + " is publishing cycles again. Monitoring windows are realigned to it.");
+        }
     }
 
     /**

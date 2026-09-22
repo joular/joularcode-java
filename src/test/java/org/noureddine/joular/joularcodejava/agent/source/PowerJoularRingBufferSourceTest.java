@@ -24,6 +24,8 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.noureddine.joular.joularcodejava.agent.source.PowerJoularRingBufferSource.ENTRY_SIZE;
 import static org.noureddine.joular.joularcodejava.agent.source.PowerJoularRingBufferSource.FILE_SIZE;
+import static org.noureddine.joular.joularcodejava.agent.source.PowerJoularRingBufferSource.MAX_WINDOW_NANOS;
+import static org.noureddine.joular.joularcodejava.agent.source.PowerSource.DEFAULT_WINDOW_NANOS;
 import static org.noureddine.joular.joularcodejava.agent.source.PowerSource.MAX_STALE_CYCLES;
 import static org.noureddine.joular.joularcodejava.agent.source.TestLogging.quietly;
 
@@ -262,27 +264,85 @@ class PowerJoularRingBufferSourceTest {
     }
 
     // -------------------------------------------------------------------------
-    // cycleCounter: the edge the agent closes its attribution window on
+    // isWindowComplete: the edge the agent closes its attribution window on
     // -------------------------------------------------------------------------
 
-    /** Unattached, the source has no cycle to offer and the agent falls back to its own timer. */
+    /** Unattached, there is no cadence to follow, so windows are simply the default length. */
     @Test
-    void cycleCounter_notAttached_returnsMinusOne() throws Exception {
+    void isWindowComplete_notAttached_usesTheFixedWindow() throws Exception {
         PowerJoularRingBufferSource source = new PowerJoularRingBufferSource(
                 tempDir.resolve("nonexistent").toString());
         quietly(PowerJoularRingBufferSource.class, () -> {
             source.initialize();
-            assertEquals(-1, source.cycleCounter());
+            source.beginWindow();
+            assertFalse(source.isWindowComplete(DEFAULT_WINDOW_NANOS - 1));
+            assertTrue(source.isWindowComplete(DEFAULT_WINDOW_NANOS));
         });
     }
 
-    /** Attached, it reports PowerJoular's counter, and follows it as cycles are written. */
+    /**
+     * An area that exists but holds no cycle yet is PowerJoular still starting up, not a stall.
+     * The window runs its default length and nothing is warned about.
+     */
     @Test
-    void cycleCounter_attached_followsTheProducer() throws Exception {
+    void isWindowComplete_noCycleWrittenYet_usesTheFixedWindowQuietly() throws Exception {
+        PowerJoularRingBufferSource source = sourceFor(writeTempRingBuffer(0L, 0, 0.0));
+        source.beginWindow();
+
+        assertFalse(source.isWindowComplete(DEFAULT_WINDOW_NANOS - 1));
+        assertTrue(source.isWindowComplete(DEFAULT_WINDOW_NANOS));
+        assertTrue(source.isWindowComplete(MAX_WINDOW_NANOS),
+                "waiting past the cap must not be treated as a stall before the first cycle");
+    }
+
+    /** The window stays open until PowerJoular publishes, then closes on that edge. */
+    @Test
+    void isWindowComplete_closesOnTheProducersEdge() throws Exception {
         PowerJoularRingBufferSource source = sourceFor(writeTempRingBuffer(4L, 3, 12.0));
-        assertEquals(4L, source.cycleCounter());
+        source.beginWindow();
+
+        assertFalse(source.isWindowComplete(DEFAULT_WINDOW_NANOS),
+                "past a second but the producer has not published, so keep waiting for its edge");
 
         writeTempRingBuffer(5L, 4, 13.0);
-        assertEquals(5L, source.cycleCounter(), "a new cycle must be visible to the agent");
+        assertTrue(source.isWindowComplete(1L), "a new cycle closes the window immediately");
+    }
+
+    /**
+     * A producer that has stopped must not stretch window after window to the cap.
+     * The first overrun is reported, and windows fall back to the fixed length until it publishes again.
+     */
+    @Test
+    void isWindowComplete_stalledProducer_warnsOnceThenUsesTheFixedWindow() throws Exception {
+        PowerJoularRingBufferSource source = sourceFor(writeTempRingBuffer(4L, 3, 12.0));
+
+        quietly(PowerJoularRingBufferSource.class, () -> {
+            source.beginWindow();
+            assertTrue(source.isWindowComplete(MAX_WINDOW_NANOS), "the cap ends the stalled wait");
+
+            // Every window after it keeps the plain cadence instead of waiting out the cap again
+            source.beginWindow();
+            assertTrue(source.isWindowComplete(DEFAULT_WINDOW_NANOS));
+        });
+    }
+
+    /** Once the producer comes back, windows realign to its edge. */
+    @Test
+    void isWindowComplete_producerRecovers_realignsToItsEdge() throws Exception {
+        PowerJoularRingBufferSource source = sourceFor(writeTempRingBuffer(4L, 3, 12.0));
+
+        quietly(PowerJoularRingBufferSource.class, () -> {
+            source.beginWindow();
+            assertTrue(source.isWindowComplete(MAX_WINDOW_NANOS));
+
+            // The producer publishes again part way through the next window
+            source.beginWindow();
+            writeTempRingBuffer(5L, 4, 13.0);
+            assertTrue(source.isWindowComplete(1L), "the edge is followed again");
+
+            // Back to waiting for the producer rather than settling for the fixed length
+            source.beginWindow();
+            assertFalse(source.isWindowComplete(DEFAULT_WINDOW_NANOS));
+        });
     }
 }
