@@ -1,0 +1,6 @@
+# Keep all files to LF file endings
+* text=auto eol=lf
+
+# Binary formats, never end-of-line converted. The PowerJoular ring buffer is a packed byte layout read field by field, so a .bin fixture must survive untouched.
+*.jar binary
+*.bin binary

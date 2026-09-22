@@ -28,7 +28,7 @@ import org.noureddine.joular.joularcodejava.agent.source.PowerSourceFactory;
 import org.noureddine.joular.joularcodejava.agent.utils.AgentProperties;
 
 /**
- * Main Joular Code - Java entry point.
+ * Main Joular Code for Java entry point.
  */
 public class Agent {
 
@@ -48,7 +48,7 @@ public class Agent {
         if (version == null || version.isEmpty()) {
             version = "unknown";
         }
-        String welcomeMessage = "Joular Code - Java: version " + version;
+        String welcomeMessage = "Joular Code for Java: version " + version;
         boolean noColor = System.getenv("NO_COLOR") != null;
 
         if (noColor) {
@@ -82,7 +82,7 @@ public class Agent {
     private static void start() {
         if (!started.compareAndSet(false, true)) {
             logger.log(Level.WARNING,
-                    "Joular Code - Java is already monitoring this JVM. Ignoring this attach.");
+                    "Joular Code for Java is already monitoring this JVM. Ignoring this attach.");
             return;
         }
         if (!startMonitoring()) {
@@ -111,7 +111,7 @@ public class Agent {
 
         if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean threadBean)) {
             logger.log(Level.SEVERE,
-                    "Unsupported JVM: requires com.sun.management.ThreadMXBean to read every thread's CPU time in one call. Joular Code - Java will not start.");
+                    "Unsupported JVM: requires com.sun.management.ThreadMXBean to read every thread's CPU time in one call. Joular Code for Java will not start.");
             return false;
         }
         if (threadBean.isThreadCpuTimeSupported()) {
@@ -120,14 +120,14 @@ public class Agent {
             }
         } else {
             logger.log(Level.SEVERE,
-                    "Thread CPU time is not supported on this JVM. Joular Code - Java will not start.");
+                    "Thread CPU time is not supported on this JVM. Joular Code for Java will not start.");
             return false;
         }
 
         OperatingSystemMXBean osBean = ManagementFactory.getOperatingSystemMXBean();
         if (!(osBean instanceof com.sun.management.OperatingSystemMXBean sunOsBean)) {
             logger.log(Level.SEVERE,
-                    "Unsupported JVM: requires com.sun.management.OperatingSystemMXBean for CPU-load metrics. Joular Code - Java will not start.");
+                    "Unsupported JVM: requires com.sun.management.OperatingSystemMXBean for CPU-load metrics. Joular Code for Java will not start.");
             return false;
         }
 

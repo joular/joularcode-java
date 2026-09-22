@@ -86,7 +86,7 @@
                             <rules>
                                 <requireJavaVersion>
                                     <version>[21,)</version>
-                                    <message>Joular Code - Java requires Java 21 or later.</message>
+                                    <message>Joular Code for Java requires Java 21 or later.</message>
                                 </requireJavaVersion>
                             </rules>
                         </configuration>

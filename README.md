@@ -1,9 +1,9 @@
-# <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> Joular Code - Java
+# <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> Joular Code for Java
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://openjdk.java.net)
 
-Joular Code - Java is a lightweight and efficient Java agent for monitoring the energy consumption of methods and execution branches at the source code level.
+Joular Code for Java is a lightweight and efficient Java agent for monitoring the energy consumption of methods and execution branches at the source code level.
 
 This project is part of [Joular Code](https://github.com/joular/joularcode), and is the successor of [JoularJX](https://github.com/joular/joularjx).
 
@@ -24,7 +24,7 @@ This project is part of [Joular Code](https://github.com/joular/joularcode), and
 
 ## :bulb: How It Works
 
-Joular Code - Java runs as a Java instrumentation agent alongside your application. Every monitoring cycle (default: 1 second), it:
+Joular Code for Java runs as a Java instrumentation agent alongside your application. Every monitoring cycle (default: 1 second), it:
 
 1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, building sample counts for each call branch.
 2. **Measures thread CPU time**: it takes CPU-time snapshots at the start and end of each cycle using `ThreadMXBean`, computing how much CPU time each thread consumed during the window.
@@ -61,7 +61,7 @@ The agent has no runtime dependencies, so the JAR holds nothing but its own clas
 
 ## :bulb: Usage
 
-Joular Code - Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to a JVM that is already running. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
+Joular Code for Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to a JVM that is already running. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
 
 PowerJoular measures the hardware through the [Joular Core](https://github.com/joular/joularcore) library. 
 
@@ -97,7 +97,7 @@ Configuration is read when the agent attaches, so `-Djoularcodejava.properties=.
 
 ### Specifying a custom configuration file
 
-By default, Joular Code - Java looks for `joularcodejava.properties` in the current working directory. To specify a custom path:
+By default, Joular Code for Java looks for `joularcodejava.properties` in the current working directory. To specify a custom path:
 
 ```bash
 java -Djoularcodejava.properties=/path/to/joularcodejava.properties -javaagent:joularcodejava-<version>.jar -jar yourApplication.jar
@@ -105,7 +105,7 @@ java -Djoularcodejava.properties=/path/to/joularcodejava.properties -javaagent:j
 
 ## :gear: Configuration
 
-All configuration is done via a `joularcodejava.properties` file. Joular Code - Java loads it from the following locations in order:
+All configuration is done via a `joularcodejava.properties` file. Joular Code for Java loads it from the following locations in order:
 
 1. Path specified by the `-Djoularcodejava.properties=<path>` JVM property
 2. `joularcodejava.properties` in the current working directory
@@ -141,7 +141,7 @@ powerjoular-ringbuffer-path=/dev/shm/joularcorering
 
 #### CSV file
 
-PowerJoular writes power data to a CSV file with `-f`, which adds a row every second, or with `-o`, which keeps only the latest row and carries no header. Joular Code - Java reads the last row each monitoring cycle and supports both. Use this when the ring buffer is unavailable; `-o` is the better of the two here, since the file stays one row long.
+PowerJoular writes power data to a CSV file with `-f`, which adds a row every second, or with `-o`, which keeps only the latest row and carries no header. Joular Code for Java reads the last row each monitoring cycle and supports both. Use this when the ring buffer is unavailable; `-o` is the better of the two here, since the file stays one row long.
 
 The file holding the power of the whole system has five columns:
 
@@ -180,7 +180,7 @@ methods-filtering-prefix=com.example,org.myapp
 
 ## :bar_chart: Generated Files
 
-Joular Code - Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution:
+Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution:
 
 | File | Contents |
 |---|---|
@@ -235,15 +235,15 @@ Each power source decides when a cycle closes, because each one knows its own ca
 
 ## :information_source: Notes
 
-- Joular Code - Java requires `com.sun.management.OperatingSystemMXBean` to measure process and system CPU load. This is available in all standard HotSpot JVMs (OpenJDK, Oracle JDK). Minimal or embedded JVMs that do not provide this class are not supported.
-- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Code - Java will fail.
+- Joular Code for Java requires `com.sun.management.OperatingSystemMXBean` to measure process and system CPU load. This is available in all standard HotSpot JVMs (OpenJDK, Oracle JDK). Minimal or embedded JVMs that do not provide this class are not supported.
+- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Code for Java will fail.
 - The agent's own monitoring thread is excluded from all energy measurements.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
 - The `NO_COLOR` environment variable disables ANSI color output in the agent banner.
 
 ## :newspaper: License
 
-Joular Code - Java is licensed under the GNU LGPL 3 license only (LGPL-3.0-only).
+Joular Code for Java is licensed under the GNU LGPL 3 license only (LGPL-3.0-only).
 
 Copyright © 2025-2026, Adel Noureddine.
 All rights reserved. This program and the accompanying materials are made available under the terms of the [GNU Lesser General Public License v3.0 (LGPL-3.0-only)](https://www.gnu.org/licenses/lgpl-3.0.en.html) which accompanies this distribution.
