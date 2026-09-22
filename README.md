@@ -61,7 +61,7 @@ The agent has no runtime dependencies, so the JAR holds nothing but its own clas
 
 ## :bulb: Usage
 
-Joular Code - Java attaches to your Java application as a Java agent. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
+Joular Code - Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to a JVM that is already running. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
 
 PowerJoular measures the hardware through the [Joular Core](https://github.com/joular/joularcore) library. 
 
@@ -76,6 +76,24 @@ java -javaagent:joularcodejava-<version>.jar YourMainClass
 ```bash
 java -javaagent:joularcodejava-<version>.jar -jar yourApplication.jar
 ```
+
+### Attaching to a JVM that is already running
+
+The agent can also be loaded into a running JVM through the Attach API, without restarting it:
+
+```java
+VirtualMachine vm = VirtualMachine.attach(pid);
+vm.loadAgent("/path/to/joularcodejava-<version>.jar");
+vm.detach();
+```
+
+Monitoring covers the JVM from the moment it attaches, so whatever the application did before that is not in the results. The target JVM has to allow it, which recent versions only do when started with `-XX:+EnableDynamicAgentLoading`:
+
+```bash
+java -XX:+EnableDynamicAgentLoading -jar yourApplication.jar
+```
+
+Configuration is read when the agent attaches, so `-Djoularcodejava.properties=...` belongs on the target JVM's own command line. Attaching a second time is ignored, with a warning, rather than starting a second monitor.
 
 ### Specifying a custom configuration file
 

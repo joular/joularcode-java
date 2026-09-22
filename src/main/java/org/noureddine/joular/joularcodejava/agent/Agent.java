@@ -17,6 +17,7 @@ import java.lang.management.OperatingSystemMXBean;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Formatter;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -34,6 +35,11 @@ public class Agent {
     public static final String AGENT_THREAD_NAME = "Joular-Agent-Monitor";
     private static final Logger logger = Logger.getLogger(
             Agent.class.getName());
+
+    /**
+     * Whether the agent holds this JVM. The Attach API can be asked to load an agent as often as anyone likes, and a second monitoring thread would sample the same JVM twice and write both sets of rows into the same files.
+     */
+    private static final AtomicBoolean started = new AtomicBoolean(false);
 
     private static void printJoularCodeJavaBanner() {
         String version = Agent.class.getPackage() != null
@@ -56,7 +62,41 @@ public class Agent {
         System.out.println(boldYellow + welcomeMessage + reset);
     }
 
+    /** Entry point when the agent is on the command line, as {@code -javaagent:joularcodejava.jar}. */
     public static void premain(String args, Instrumentation inst) {
+        start();
+    }
+
+    /**
+     * Entry point when the agent is loaded into a JVM that is already running, through the Attach
+     * API ({@code VirtualMachine.loadAgent}) or a tool built on it.
+     *
+     * <p>Monitoring covers the JVM from the moment it attaches, so whatever the application did
+     * before that is not in the results. Note that a JVM only accepts an agent this way when it was
+     * started with {@code -XX:+EnableDynamicAgentLoading}, or is old enough to still allow it by default.
+     */
+    public static void agentmain(String args, Instrumentation inst) {
+        start();
+    }
+
+    private static void start() {
+        if (!started.compareAndSet(false, true)) {
+            logger.log(Level.WARNING,
+                    "Joular Code - Java is already monitoring this JVM. Ignoring this attach.");
+            return;
+        }
+        if (!startMonitoring()) {
+            // Nothing was left running, so a later attach is free to try again
+            started.set(false);
+        }
+    }
+
+    /**
+     * Brings the agent up.
+     *
+     * @return {@code true} when a monitoring thread was left running, {@code false} when startup could not proceed and this JVM is unchanged.
+     */
+    private static boolean startMonitoring() {
         configureLogging();
         printJoularCodeJavaBanner();
         logger.log(Level.INFO, "Initializing Joular Code Java...");
@@ -66,13 +106,13 @@ public class Agent {
 
         if (powerSource == null) {
             logger.log(Level.SEVERE, "No valid power source found. Agent will not start.");
-            return;
+            return false;
         }
 
         if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean threadBean)) {
             logger.log(Level.SEVERE,
                     "Unsupported JVM: requires com.sun.management.ThreadMXBean to read every thread's CPU time in one call. Joular Code - Java will not start.");
-            return;
+            return false;
         }
         if (threadBean.isThreadCpuTimeSupported()) {
             if (!threadBean.isThreadCpuTimeEnabled()) {
@@ -81,14 +121,14 @@ public class Agent {
         } else {
             logger.log(Level.SEVERE,
                     "Thread CPU time is not supported on this JVM. Joular Code - Java will not start.");
-            return;
+            return false;
         }
 
         OperatingSystemMXBean osBean = ManagementFactory.getOperatingSystemMXBean();
         if (!(osBean instanceof com.sun.management.OperatingSystemMXBean sunOsBean)) {
             logger.log(Level.SEVERE,
                     "Unsupported JVM: requires com.sun.management.OperatingSystemMXBean for CPU-load metrics. Joular Code - Java will not start.");
-            return;
+            return false;
         }
 
         // The OS bean reports its loads over the interval since the previous call, so the first reading is meaningless and comes back negative.
@@ -109,7 +149,7 @@ public class Agent {
         if (startupSignaled && !monitoringHandler.isStartupSuccessful()) {
             Throwable startupFailure = monitoringHandler.getStartupFailure();
             logger.log(Level.SEVERE, "Monitoring thread failed during startup.", startupFailure);
-            return;
+            return false;
         }
         if (!startupSignaled) {
             logger.log(Level.WARNING,
@@ -124,6 +164,7 @@ public class Agent {
                 }));
 
         logger.log(Level.INFO, "Joular Code Java started successfully.");
+        return true;
     }
 
     private static void configureLogging() {

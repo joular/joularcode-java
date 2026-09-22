@@ -168,7 +168,7 @@ public class PowerJoularRingBufferSource implements PowerSource {
             logger.log(Level.WARNING,
                     () -> "The PowerJoular ring buffer " + path + " has published no new cycle for "
                             + MAX_WINDOW_NANOS / 1_000_000L + " ms, so monitoring windows are no longer aligned to it and fall back to a fixed "
-                            + DEFAULT_WINDOW_NANOS / 1_000_000L + " ms. Is PowerJoular stillrunning  with -r? Results stay on their usual cadence, but each window and the power charged to it may now describe slightly different seconds.");
+                            + DEFAULT_WINDOW_NANOS / 1_000_000L + " ms. Is PowerJoular still running with -r? Results stay on their usual cadence, but each window and the power charged to it may now describe slightly different seconds.");
         }
     }
 

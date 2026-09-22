@@ -51,6 +51,8 @@
         <encoding>UTF-8</encoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mockito.version>5.23.0</mockito.version>
+        <!-- Default so surefire's @{argLine} still resolves when no agent (JaCoCo and the like) has set it -->
+        <argLine></argLine>
     </properties>
 
     <dependencies>
@@ -97,11 +99,26 @@
                 <version>3.16.0</version>
             </plugin>
             <plugin>
+                <!-- Exposes ${org.mockito:mockito-core:jar} as the resolved path to the agent jar, whatever the local repository layout is -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.11.0</version>
+                <executions>
+                    <execution>
+                        <id>resolve-dependency-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.0</version>
                 <configuration>
-                    <argLine>-Xshare:off -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Dnet.bytebuddy.experimental=true</argLine>
+                    <!-- @{argLine} is evaluated late, so an agent that sets the argLine property (JaCoCo) composes with these flags instead of being dropped -->
+                    <argLine>@{argLine} -Xshare:off -javaagent:${org.mockito:mockito-core:jar} -Dnet.bytebuddy.experimental=true</argLine>
                     <redirectTestOutputToFile>true</redirectTestOutputToFile>
                 </configuration>
             </plugin>
@@ -115,8 +132,6 @@
                         <manifestEntries>
                             <Agent-Class>org.noureddine.joular.joularcodejava.agent.Agent</Agent-Class>
                             <Premain-Class>org.noureddine.joular.joularcodejava.agent.Agent</Premain-Class>
-                            <Can-Redefine-Classes>true</Can-Redefine-Classes>
-                            <Can-Retransform-Classes>true</Can-Retransform-Classes>
                             <Implementation-Version>${project.version}</Implementation-Version>
                         </manifestEntries>
                     </archive>
