@@ -1,0 +1,4 @@
+# Keep all files to LF file endings
+* text=auto eol=lf
+
+*.jar binary

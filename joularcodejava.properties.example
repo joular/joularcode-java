@@ -1,0 +1,55 @@
+# Copyright (c) 2026, Adel Noureddine.
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the
+# GNU Lesser General Public License v3.0 (LGPL-3.0-only)
+# which accompanies this distribution, and is available at
+# https://www.gnu.org/licenses/lgpl-3.0.en.html
+#
+# Author : Adel Noureddine
+
+# Joular Code for Java: Configuration
+#
+# CPU power source
+# Options:
+#   auto (RAPL on Linux, the PowerJoular ring buffer everywhere else, including Linux machines without RAPL such as the Raspberry Pi)
+#   rapl (read Linux RAPL directly, from /sys/class/powercap)
+#   ringbuffer (read the shared memory ring buffer PowerJoular writes with -r)
+#   vm (inside a virtual machine, read the file the host writes the power of this virtual machine to, see vm-power-file)
+# Default if left empty: auto
+power-source-type=
+
+# Path to the ring buffer (used by ringbuffer, and by auto on a machine without RAPL)
+# Default if left empty (OS-dependent):
+#   Linux:   /dev/shm/powerjoular
+#   macOS:   /tmp/powerjoular
+#   Windows: %PROGRAMDATA%\powerjoular
+powerjoular-ringbuffer-path=
+
+# The path to the file where the host writes the power consumption of the guest virtual machine (if power-source-type is vm), as seen from the virtual machine
+# On the host, powerjoular -p <pid of the virtual machine's process> -o <file> writes it to <file>-<pid>.csv
+# Example: /mnt/shared/vm-power.csv-4242.csv
+vm-power-file=
+
+# The format of the virtual machine file (if power-source-type is vm)
+# Options:
+#   powerjoular (the row PowerJoular rewrites every second with -o for a process: timestamp,cpu_usage,cpu_power)
+#   watts (the power alone, in watts, used as it is)
+# Default if left empty: powerjoular
+vm-power-format=
+
+# The sample rate (milliseconds) for the agent to monitor methods usage by calling the JVM stack
+# Higher count means less accurate energy data
+# Lower count means higher overhead of the agent
+# From 1 to 1000
+# Default if left empty: 10 (good balance between accuracy and efficiency)
+stack-monitoring-sample-rate=
+
+# Output folder for results
+# Default if left empty: joular-code-java-results
+results-path=
+
+# Only frames whose package.class.method starts with one of these prefixes are filtered and calculated and written to methods-power-app.csv
+# methods-power-all.csv always have every branch (including those of the JDK)
+# Several prefixes are separated by a comma, e.g. com.example,org.myapp; any match counts
+# Default if left empty: no filter (all branches go to both files)
+methods-filtering-prefix=
