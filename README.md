@@ -10,36 +10,36 @@ This project is part of [Joular Code](https://github.com/joular/joularcode), and
 ## :rocket: Features
 
 - Monitor power consumption and energy of each method and execution branch at runtime
-- Works as a Java agent — no source code instrumentation or modification needed
+- Works as a Java agent, with no source code instrumentation or modification needed
 - Samples the JVM stack at high frequency (default: every 10 ms) and attributes energy every second
 - No runtime dependencies: the agent runs on the JDK alone
-- Supports three power data source backends:
-  - Shared memory ring buffer (IPC): lowest latency, recommended
-  - CSV file: file-based polling
-  - Linux RAPL powercap PKG domain: direct hardware counter source
+- Measures CPU power in three ways:
+  - Linux RAPL, read directly from powercap: nothing else to install
+  - [PowerJoular](https://github.com/joular/powerjoular)'s shared memory ring buffer: Windows, macOS, Raspberry Pi, with the measuring in a separate process
+  - Inside a virtual machine, using a shared power file between the host and the guest
 - Generates CSV files with per-method and per-branch power (Watts) and energy (Joules)
-- Produces two output sets: one for all methods (including JDK internals), one filtered to your application packages
+- Produces two output sets: one for all methods (including JDK methods), and one filtered and calculated to your application's methods
 - Configurable method filtering by package/class prefix to focus energy data on your code
 - Cross-platform: Windows, macOS, Linux, and Raspberry Pi
 
 ## :bulb: How It Works
 
-Joular Code for Java runs as a Java instrumentation agent alongside your application. Every monitoring cycle (default: 1 second), it:
+Joular Code for Java runs as a Java agent alongside your application. Every monitoring cycle (about 1 second), it:
 
-1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, building sample counts for each call branch.
-2. **Measures thread CPU time**: it takes CPU-time snapshots at the start and end of each cycle using `ThreadMXBean`, computing how much CPU time each thread consumed during the window.
-3. **Reads system power** from PowerJoular: the total CPU power in Watts for the current monitoring cycle.
-4. **Scales to process power**: it estimates the JVM process's share of CPU power using `(processCpuLoad / systemCpuLoad) * totalCpuPower`.
-5. **Attributes energy to methods**: each thread receives a fraction of process power proportional to its CPU time. Within each thread, power is further distributed to call branches proportionally to their sample counts.
+1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, counting how often each call branch is seen.
+2. **Measures CPU time**: at the start and end of each cycle, it reads the CPU time of each thread and of the whole JVM.
+3. **Reads the CPU power** of the machine over the cycle, from RAPL, PowerJoular, or the host of a virtual machine.
+4. **Scales to process power**: the JVM's share of the CPU power is its own CPU load over the machine's: `cpuPower * processLoad / systemLoad`.
+5. **Attributes energy to methods and execution branches**: each thread receives a fraction of process power proportional to its CPU time. Within each thread, power is further distributed to execution call branches proportionally to their sample counts.
 6. **Writes results** to CSV files: both power (W) and energy (J = W × interval) are recorded per branch per cycle.
 
 ## :package: Compilation and Installation
 
 ### Requirements
 
-- Java 21 or later
+- Java 21 or later, to build and to run the application being monitored
 - Apache Maven 3.6 or later
-- [PowerJoular](https://github.com/joular/powerjoular) 2.0.0 or later for the `ringbuffer` and `csv` power sources, or Linux powercap/RAPL access for `rapl`
+- One way to measure the CPU (see [Power sources](#power-sources)): read access to Linux RAPL, [PowerJoular](https://github.com/joular/powerjoular) 2.0.0 or later, or, in a virtual machine, a host running PowerJoular (or another power monitoring tool)
 
 ### Build
 
@@ -51,7 +51,7 @@ cd joularcode-java
 mvn clean install
 ```
 
-This produces a fat JAR at:
+This produces a JAR at:
 
 ```
 target/joularcodejava-<version>.jar
@@ -61,9 +61,7 @@ The agent has no runtime dependencies, so the JAR holds nothing but its own clas
 
 ## :bulb: Usage
 
-Joular Code for Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to a JVM that is already running. Start [PowerJoular](https://github.com/joular/powerjoular) first when using `ringbuffer` or `csv`; on Linux, `rapl` can read CPU package power directly from the powercap interface.
-
-PowerJoular measures the hardware through the [Joular Core](https://github.com/joular/joularcore) library. 
+Joular Code for Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to an already running JVM. On Linux it reads the CPU power from RAPL directly, and elsewhere (including Linux), start [PowerJoular](https://github.com/joular/powerjoular) with `-r` option (to export power data to a ring buffer), see [Power sources](#power-sources).
 
 ### Basic usage
 
@@ -87,17 +85,13 @@ vm.loadAgent("/path/to/joularcodejava-<version>.jar");
 vm.detach();
 ```
 
-Monitoring covers the JVM from the moment it attaches, so whatever the application did before that is not in the results. The target JVM has to allow it, which recent versions only do when started with `-XX:+EnableDynamicAgentLoading`:
-
-```bash
-java -XX:+EnableDynamicAgentLoading -jar yourApplication.jar
-```
+Monitoring covers the JVM from the moment it attaches, so whatever the application did before that is not in the results. JDK 21 and later allow the attach by default but print a warning: start the target JVM with `-XX:+EnableDynamicAgentLoading` to silence it, or with `-XX:-EnableDynamicAgentLoading` to forbid it.
 
 Configuration is read when the agent attaches, so `-Djoularcodejava.properties=...` belongs on the target JVM's own command line. Attaching a second time is ignored, with a warning, rather than starting a second monitor.
 
 ### Specifying a custom configuration file
 
-By default, Joular Code for Java looks for `joularcodejava.properties` in the current working directory. To specify a custom path:
+By default, Joular Code for Java looks for `joularcodejava.properties` in the current working directory. To specify another path:
 
 ```bash
 java -Djoularcodejava.properties=/path/to/joularcodejava.properties -javaagent:joularcodejava-<version>.jar -jar yourApplication.jar
@@ -105,65 +99,75 @@ java -Djoularcodejava.properties=/path/to/joularcodejava.properties -javaagent:j
 
 ## :gear: Configuration
 
-All configuration is done via a `joularcodejava.properties` file. Joular Code for Java loads it from the following locations in order:
+All configuration is done via a `joularcodejava.properties` file, read from:
 
-1. Path specified by the `-Djoularcodejava.properties=<path>` JVM property
-2. `joularcodejava.properties` in the current working directory
-3. Built-in defaults (bundled inside the JAR)
+1. The path given with the `-Djoularcodejava.properties=<path>` JVM property
+2. or `joularcodejava.properties` in the current working directory
+
+A missing file, or a property left empty, means the default value will be used. [joularcodejava.properties.example](joularcodejava.properties.example) is a commented example template you can use.
 
 ### Configuration properties
 
 | Property | Default | Description |
 |---|---|---|
-| `power-source-type` | `ringbuffer` | Power data backend: `ringbuffer`, `csv`, or `rapl` |
+| `power-source-type` | `auto` | Where the CPU power comes from: `auto`, `rapl`, `ringbuffer` or `vm` |
 | `powerjoular-ringbuffer-path` | OS-dependent | Path to the PowerJoular ring buffer (see below) |
-| `powerjoular-csv-path` | `powerjoular-data.csv` | Path to the PowerJoular system CSV file |
-| `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds. Lower = more accurate but higher overhead |
+| `vm-power-file` | *(empty)* | In a virtual machine, the file the host writes hte power of the guest virtual machine (see below) |
+| `vm-power-format` | `powerjoular` | Format of `vm-power-file`: `powerjoular` or `watts` |
+| `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds, from 1 to 1000. Lower = more accurate but higher overhead |
 | `results-path` | `joular-code-java-results` | Directory where CSV result files are written |
 | `methods-filtering-prefix` | *(empty)* | Comma-separated list of package/class prefixes to filter app-specific methods (e.g., `com.example,org.myapp`) |
 
-### Power source backends
+### Power sources
 
-#### Ring buffer (recommended)
+With `power-source-type=auto`, the default, the agent reads RAPL on Linux, and the PowerJoular ring buffer everywhere else, including Linux machines without RAPL such as the Raspberry Pi. On Linux, `ringbuffer` keeps the application unprivileged: run `sudo powerjoular -r` and set it explicitly. In a virtual machine, set `vm`.
 
-The ring buffer backend reads the shared memory area PowerJoular writes with `-r`. This is the lowest-latency option and has minimal overhead. The area is a plain file on every OS, mapped read-only by the agent.
+#### Linux RAPL (`rapl`)
 
-Default paths by OS:
-- **Linux**: `/dev/shm/joularcorering`
-- **macOS**: `/tmp/joularcorering`
-- **Windows**: `%PROGRAMDATA%\joularcorering`
-
-```properties
-power-source-type=ringbuffer
-powerjoular-ringbuffer-path=/dev/shm/joularcorering
-```
-
-
-#### CSV file
-
-PowerJoular writes power data to a CSV file with `-f`, which adds a row every second, or with `-o`, which keeps only the latest row and carries no header. Joular Code for Java reads the last row each monitoring cycle and supports both. Use this when the ring buffer is unavailable; `-o` is the better of the two here, since the file stays one row long.
-
-The file holding the power of the whole system has five columns:
-
-```
-Timestamp,CPU Usage,Total Power,CPU Power,GPU Power
-1756681930,0.2460,18.4500,15.2000,3.2500
-```
-
-The agent reads **CPU Power**, the fourth column. It recognises the file by how many columns its rows carry, so it reads both the form with a header and the headerless one `-o` writes.
-
-```properties
-power-source-type=csv
-powerjoular-csv-path=/path/to/powerjoular-data.csv
-```
-
-#### Linux RAPL powercap
-
-Reads CPU package power directly from the Linux powercap RAPL PKG domain at `/sys/class/powercap/intel-rapl/intel-rapl:0`. This source is Linux-only, uses `energy_uj` and `max_energy_range_uj`, and supports the PKG `package-0` domain only.
+Reads the energy counters of the CPU packages directly from `/sys/class/powercap/intel-rapl:N`, Intel and AMD alike, adding up every package of a machine with several sockets. Nothing else is needed, but `energy_uj` is only readable by root on most distributions: run the application as root, give its user read access to those files (for example with a udev rule), or run PowerJoular with `-r` as root and set `power-source-type=ringbuffer`. PowerJoular reads the first package only, so on a machine with several sockets `rapl` and `ringbuffer` do not give the same figure.
 
 ```properties
 power-source-type=rapl
 ```
+
+#### PowerJoular ring buffer (`ringbuffer`)
+
+Reads the shared memory area [PowerJoular](https://github.com/joular/powerjoular) writes with `-r`. PowerJoular measures the hardware through [Joular Core](https://github.com/joular/joularcore) (RAPL on Windows, powermetrics on Macs, where PowerJoular has to run with `sudo`, power models on Raspberry Pi), and runs as a process of its own, so the privileges needed to measure the hardware stay out of the Java application. Each monitoring cycle ends as PowerJoular publishes a measurement, so the stack samples and the power describe the same second. PowerJoular may be started before or after the application, and restarted while it runs, except on Windows: a mapped file cannot be deleted there, so PowerJoular has to be started before the application and not restarted while it runs.
+
+Default paths by OS:
+- **Linux**: `/dev/shm/powerjoular`
+- **macOS**: `/tmp/powerjoular`
+- **Windows**: `%PROGRAMDATA%\powerjoular`
+
+```properties
+power-source-type=ringbuffer
+powerjoular-ringbuffer-path=/dev/shm/powerjoular
+```
+
+#### Virtual machine (`vm`)
+
+The CPU of a virtual machine cannot be measured from inside it, but its host can measure the process the virtual machine runs as. Run PowerJoular on the host for that process, share the file it writes with the virtual machine (virtiofs, 9p, a shared folder), and point the agent at it. Nothing else has to run in the virtual machine.
+
+On the host, `-p` with `-o` writes two files: `<file>` for the whole host, and `<file>-<pid>.csv` for the process, which is the one to share:
+
+```bash
+powerjoular -p <pid of the virtual machine's process> -o /shared/vm-power.csv
+```
+
+In the virtual machine:
+
+```properties
+power-source-type=vm
+vm-power-file=/mnt/shared/vm-power.csv-<pid>.csv
+vm-power-format=powerjoular
+```
+
+Only the first line of the file is read, in one of the two formats:
+
+- `powerjoular` (the default): the row PowerJoular rewrites every second with `-o` for a process, `timestamp,cpu_usage,cpu_power`. The file of the whole host, with five columns, is refused, since it would charge all of the host's power to one virtual machine. The host writes on its own one-second cycle, so a cycle may see the row the previous one saw, or catch the file while it is rewritten: the last row covers up to two more cycles, after which the host is taken to have stopped and no energy is attributed until it writes again.
+- `watts`: the power alone, in watts, written by any tool. The value is used as it is, however long ago it was written.
+
+Some shared folders cache files in the guest (9p with `cache=loose`, virtiofs with `cache=always`), which can hide the host's updates: mount the share without caching.
 
 ### Method filtering
 
@@ -177,19 +181,18 @@ methods-filtering-prefix=com.example,org.myapp
 - When set, `methods-power-app.csv` only contains branches where at least one stack element matches a prefix. Energy from unmatched (e.g., JDK) frames that are called by a matched method is attributed upward to the matched method.
 - `methods-power-all.csv` always contains every observed branch regardless of this setting.
 
-
 ## :bar_chart: Generated Files
 
 Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution:
 
 | File | Contents |
 |---|---|
-| `methods-power-all.csv` | Power and energy for all observed call branches, including JDK internals |
-| `methods-power-app.csv` | Power and energy for call branches filtered to your application packages |
+| `methods-power-all.csv` | Power and energy for all observed call branches, including JDK ones |
+| `methods-power-app.csv` | Power and energy for call branches filtered to your application's packages and methods |
 
 ### CSV format
 
-Both files share the same schema:
+Both files share the same format:
 
 ```
 timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
@@ -219,33 +222,22 @@ timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
 1746000001000,com.example.Main.main;com.example.Worker.compute,2.158300000,2.158300000,1.000000000,0.9974
 ```
 
-Each power source decides when a cycle closes, because each one knows its own cadence. With the ring buffer the agent closes a cycle the moment PowerJoular publishes a measurement, so the stack samples and the power describe the same second; if PowerJoular stops publishing, the agent says so once and falls back to a fixed one second cycle until it returns. The CSV and RAPL sources always use that fixed one second cycle: RAPL has no cycle of its own, and recognising the CSV's would mean re-parsing the file on every stack sample.
-
-## :warning: Troubleshooting
-
-- **"No fresh power data ... for 5 cycles"** (`WARNING` log): PowerJoular has stopped writing, or is writing somewhere else. Confirm it is still running, with `-r` for the ring buffer or `-f`/`-o` for CSV. A brief gap is covered by the last value read; past five cycles the agent reports `0.0` and attributes no energy.
-- **"Could not open the PowerJoular ring buffer ..."** (`WARNING` log): the ring buffer memory area is not there yet. This is not fatal, the agent retries on every cycle, so starting the JVM before PowerJoular is fine. If it never clears, check `powerjoular-ringbuffer-path`.
-- **"Could not read power data from ..."** (`WARNING` log): the configured `powerjoular-csv-path` does not exist. Check that PowerJoular is running with `-f` or `-o` and writing to the same path. The warning is logged only once until the file appears.
-- **"The stack sampler cannot keep up ..."** (`WARNING` log): dumping the stacks of this many threads costs more than `stack-monitoring-sample-rate` allows, so fewer samples were taken than configured. The message gives the rate actually achieved. Raise the sample rate for an honest figure, or accept the coarser data; the energy totals stay correct either way, they are just based on fewer samples.
-- **"Only N% of this JVM's CPU time belonged to threads that were sampled"** (`WARNING` log): see the `coverage` column above. The rows are a lower bound rather than wrong.
-- **"... has published no new cycle for 2000 ms"** (`WARNING` log): PowerJoular's ring buffer counter has stopped moving, so the agent gave up aligning its cycles to it and went back to a fixed one second cycle. Results keep coming at the usual rate, but each cycle and the power charged to it may describe slightly different seconds. Check PowerJoular is still running with `-r`; the agent logs again at `INFO` when it starts publishing and the cycles realign.
-- **"... is the file PowerJoular writes for one monitored process"** (`SEVERE` log): the CSV has three columns, so it holds the power of a single process, which the agent would scale a second time. Point `powerjoular-csv-path` at the file for the whole system instead.
-- **RAPL mode fails at startup**: `power-source-type=rapl` is Linux-only and requires readable `/sys/class/powercap/intel-rapl/intel-rapl:0/name`, `energy_uj`, and `max_energy_range_uj` files for the `package-0` domain. Depending on the system, this may require elevated permissions.
-- **No rows in `methods-power-app.csv`**: if `methods-filtering-prefix` is set, the configured prefix may not match any fully-qualified method name in your application. If it is unset, all observed methods are eligible for both output files.
+With RAPL, a cycle lasts one second, and the energy is read at its very end, so the power and the stack samples cover the same time. In a virtual machine, a cycle lasts one second too, and gets the latest power the host wrote. With the ring buffer, a cycle ends when PowerJoular publishes a measurement, or after two seconds without one, in which case that cycle gets no rows.
 
 ## :information_source: Notes
 
 - Joular Code for Java requires `com.sun.management.OperatingSystemMXBean` to measure process and system CPU load. This is available in all standard HotSpot JVMs (OpenJDK, Oracle JDK). Minimal or embedded JVMs that do not provide this class are not supported.
-- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Code for Java will fail.
+- Thread CPU time attribution requires `ThreadMXBean.isThreadCpuTimeSupported()` to return `true`. If it does not, Joular Code for Java does not start, and the application runs unmonitored.
+- The agent never follows a symbolic link when it opens its results files or the ring buffer, since it may run as root and these often sit in directories every user can write to.
+- When the application runs as root, give the configuration file with `-Djoularcodejava.properties` rather than leaving it in a working directory others can write to, since it chooses where the results are written.
 - The agent's own monitoring thread is excluded from all energy measurements.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
-- The `NO_COLOR` environment variable disables ANSI color output in the agent banner.
 
 ## :newspaper: License
 
 Joular Code for Java is licensed under the GNU LGPL 3 license only (LGPL-3.0-only).
 
-Copyright © 2025-2026, Adel Noureddine.
+Copyright © 2026, Adel Noureddine.
 All rights reserved. This program and the accompanying materials are made available under the terms of the [GNU Lesser General Public License v3.0 (LGPL-3.0-only)](https://www.gnu.org/licenses/lgpl-3.0.en.html) which accompanies this distribution.
 
 Author: Prof. Adel Noureddine

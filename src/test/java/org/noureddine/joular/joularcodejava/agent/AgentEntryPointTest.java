@@ -17,40 +17,26 @@ import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Guards the two entry points the JVM looks up by name.
- *
- * <p>The manifest names this class for both {@code Premain-Class} and {@code Agent-Class}, and the
- * JVM resolves the matching method reflectively at load time. Nothing in the Java compiler ties the
- * two together, so the manifest once advertised {@code Agent-Class} while no {@code agentmain}
- * existed: every attach to a running JVM failed, and no test noticed. These assertions are the
- * missing link, and they fail at build time rather than at someone else's attach.
- *
- * <p>They deliberately only inspect the signatures. Calling either method starts a monitoring
- * thread and writes result files, which belongs in an integration run rather than a unit test.
- */
+/** The manifest names Agent for Premain-Class and Agent-Class, and the JVM looks these two methods up by signature. */
 class AgentEntryPointTest {
 
     /** Loaded by the JVM when the agent is given on the command line with {@code -javaagent:}. */
     @Test
-    void premain_hasTheSignatureTheJvmLooksUp() {
+    void premain_hasTheSignatureTheJvmLooksUp() throws Exception {
         assertIsAgentEntryPoint("premain");
     }
 
     /** Loaded by the JVM when the agent is attached to an already running process. */
     @Test
-    void agentmain_hasTheSignatureTheAttachApiLooksUp() {
+    void agentmain_hasTheSignatureTheAttachApiLooksUp() throws Exception {
         assertIsAgentEntryPoint("agentmain");
     }
 
-    private static void assertIsAgentEntryPoint(String name) {
-        Method method = assertDoesNotThrow(
-                () -> Agent.class.getMethod(name, String.class, Instrumentation.class),
-                name + "(String, Instrumentation) must exist for the JVM to find it");
+    private static void assertIsAgentEntryPoint(String name) throws Exception {
+        Method method = Agent.class.getMethod(name, String.class, Instrumentation.class);
 
         int modifiers = method.getModifiers();
         assertTrue(Modifier.isPublic(modifiers), name + " must be public");
