@@ -38,7 +38,7 @@ Joular Code for Java runs as a Java agent alongside your application. Every moni
 ### Requirements
 
 - Java 21 or later, to build and to run the application being monitored
-- Apache Maven 3.6 or later
+- Apache Maven 3.6.3 or later
 - One way to measure the CPU (see [Power sources](#power-sources)): read access to Linux RAPL, [PowerJoular](https://github.com/joular/powerjoular) 2.0.0 or later, or, in a virtual machine, a host running PowerJoular (or another power monitoring tool)
 
 ### Build
@@ -61,7 +61,7 @@ The agent has no runtime dependencies, so the JAR holds nothing but its own clas
 
 ## :bulb: Usage
 
-Joular Code for Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to an already running JVM. On Linux it reads the CPU power from RAPL directly, and elsewhere (including Linux), start [PowerJoular](https://github.com/joular/powerjoular) with `-r` option (to export power data to a ring buffer), see [Power sources](#power-sources).
+Joular Code for Java attaches to your Java application as a Java agent, either on the command line with `-javaagent:` or to an already running JVM. On Linux it reads the CPU power from RAPL directly, and elsewhere (or on Linux with `power-source-type=ringbuffer`), start [PowerJoular](https://github.com/joular/powerjoular) with `-r` option (to export power data to a ring buffer), see [Power sources](#power-sources).
 
 ### Basic usage
 
@@ -112,7 +112,7 @@ A missing file, or a property left empty, means the default value will be used. 
 |---|---|---|
 | `power-source-type` | `auto` | Where the CPU power comes from: `auto`, `rapl`, `ringbuffer` or `vm` |
 | `powerjoular-ringbuffer-path` | OS-dependent | Path to the PowerJoular ring buffer (see below) |
-| `vm-power-file` | *(empty)* | In a virtual machine, the file the host writes hte power of the guest virtual machine (see below) |
+| `vm-power-file` | *(empty)* | In a virtual machine, the file the host writes the power of the guest virtual machine (see below) |
 | `vm-power-format` | `powerjoular` | Format of `vm-power-file`: `powerjoular` or `watts` |
 | `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds, from 1 to 1000. Lower = more accurate but higher overhead |
 | `results-path` | `joular-code-java-results` | Directory where CSV result files are written |
@@ -132,7 +132,7 @@ power-source-type=rapl
 
 #### PowerJoular ring buffer (`ringbuffer`)
 
-Reads the shared memory area [PowerJoular](https://github.com/joular/powerjoular) writes with `-r`. PowerJoular measures the hardware through [Joular Core](https://github.com/joular/joularcore) (RAPL on Windows, powermetrics on Macs, where PowerJoular has to run with `sudo`, power models on Raspberry Pi), and runs as a process of its own, so the privileges needed to measure the hardware stay out of the Java application. Each monitoring cycle ends as PowerJoular publishes a measurement, so the stack samples and the power describe the same second. PowerJoular may be started before or after the application, and restarted while it runs, except on Windows: a mapped file cannot be deleted there, so PowerJoular has to be started before the application and not restarted while it runs.
+Reads the shared memory area [PowerJoular](https://github.com/joular/powerjoular) writes with `-r`. PowerJoular measures the hardware through [Joular Core](https://github.com/joular/joularcore) (RAPL on Windows, powermetrics on Macs, where PowerJoular has to run with `sudo`, power models on Raspberry Pi), and runs as a process of its own, so the privileges needed to measure the hardware stay out of the Java application. Each monitoring cycle ends as PowerJoular publishes a measurement, so the stack samples and the power describe the same second. PowerJoular may be started before or after the application, and restarted while it runs, except on Windows: a mapped file cannot be deleted there, so PowerJoular has to be started before the application and not restarted while it runs. When PowerJoular cannot read the CPU, it publishes 0 W and no rows are written, without a warning: `powerjoular -d` shows whether it can read the CPU.
 
 Default paths by OS:
 - **Linux**: `/dev/shm/powerjoular`
@@ -183,7 +183,7 @@ methods-filtering-prefix=com.example,org.myapp
 
 ## :bar_chart: Generated Files
 
-Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution:
+Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution (a new run adds its rows to the existing files):
 
 | File | Contents |
 |---|---|
@@ -212,7 +212,7 @@ timestamp,branch,power_watts,energy_joules,interval_seconds,coverage
 Power is split between threads by the CPU time each one used, and the denominator is every thread that used CPU, not only the ones that were caught in a sample.
 Power drawn by a thread the agent never sampled is therefore left unattributed rather than shared out over the threads it did see.
 `coverage` says how much of the JVM's CPU time is represented: at `1.0` everything was accounted for, and at `0.6` only 60% of what the JVM consumed are attributed to the observed threads at that timestamp.
-Threads that are created and destroyed inside a single cycle are invisible here, because the JVM stops reporting a thread's CPU time once it has ended.
+Threads that end during a cycle are invisible here, because the JVM stops reporting a thread's CPU time once it has ended: their power goes to the threads still alive, and `coverage` does not drop.
 
 ### Example output
 
@@ -232,6 +232,7 @@ With RAPL, a cycle lasts one second, and the energy is read at its very end, so 
 - When the application runs as root, give the configuration file with `-Djoularcodejava.properties` rather than leaving it in a working directory others can write to, since it chooses where the results are written.
 - The agent's own monitoring thread is excluded from all energy measurements.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
+- The cycle running when the JVM stops is not written, so a program that ends within its first second leaves the files with only their header.
 
 ## :newspaper: License
 
