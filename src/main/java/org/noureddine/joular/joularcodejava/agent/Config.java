@@ -117,6 +117,6 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
             String programData = System.getenv("PROGRAMDATA");
             return (programData == null || programData.isBlank() ? "C:\\ProgramData" : programData) + "\\powerjoular";
         }
-        return os.contains("mac") ? "/tmp/powerjoular" : "/dev/shm/powerjoular";
+        return os.contains("mac") || os.contains("freebsd") ? "/tmp/powerjoular" : "/dev/shm/powerjoular";
     }
 }

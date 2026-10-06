@@ -17,12 +17,12 @@ Detailed documentation (including user and reference guides) is available at: [h
 - No runtime dependencies: the agent runs on the JDK alone
 - Measures CPU power in three ways:
   - Linux RAPL, read directly from powercap: nothing else to install
-  - [PowerJoular](https://github.com/joular/powerjoular)'s shared memory ring buffer: Windows, macOS, Raspberry Pi, with the measuring in a separate process
+  - [PowerJoular](https://github.com/joular/powerjoular)'s shared memory ring buffer: Windows, macOS, FreeBSD, Raspberry Pi, with the measuring in a separate process
   - Inside a virtual machine, using a shared power file between the host and the guest
 - Generates CSV files with per-method and per-branch power (Watts) and energy (Joules)
 - Produces two output sets: one for all methods (including JDK methods), and one filtered and calculated to your application's methods
 - Configurable method filtering by package/class prefix to focus energy data on your code
-- Cross-platform: Windows, macOS, Linux, and Raspberry Pi
+- Cross-platform: Windows, macOS, Linux, FreeBSD, and Raspberry Pi
 
 ## :bulb: How It Works
 
@@ -134,11 +134,12 @@ power-source-type=rapl
 
 #### PowerJoular ring buffer (`ringbuffer`)
 
-Reads the shared memory area [PowerJoular](https://github.com/joular/powerjoular) writes with `-r`. PowerJoular measures the hardware through [Joular Core](https://github.com/joular/joularcore) (RAPL on Windows, powermetrics on Macs, where PowerJoular has to run with `sudo`, power models on Raspberry Pi), and runs as a process of its own, so the privileges needed to measure the hardware stay out of the Java application. Each monitoring cycle ends as PowerJoular publishes a measurement, so the stack samples and the power describe the same second. PowerJoular may be started before or after the application, and restarted while it runs, except on Windows: a mapped file cannot be deleted there, so PowerJoular has to be started before the application and not restarted while it runs. When PowerJoular cannot read the CPU, it publishes 0 W and no rows are written, without a warning: `powerjoular -d` shows whether it can read the CPU.
+Reads the shared memory area [PowerJoular](https://github.com/joular/powerjoular) writes with `-r`. PowerJoular measures the hardware through [Joular Core](https://github.com/joular/joularcore) (RAPL on Windows, and on FreeBSD with the `cpuctl` module and `sudo`, powermetrics on Macs, where PowerJoular has to run with `sudo`, power models on Raspberry Pi), and runs as a process of its own, so the privileges needed to measure the hardware stay out of the Java application. Each monitoring cycle ends as PowerJoular publishes a measurement, so the stack samples and the power describe the same second. PowerJoular may be started before or after the application, and restarted while it runs, except on Windows: a mapped file cannot be deleted there, so PowerJoular has to be started before the application and not restarted while it runs. When PowerJoular cannot read the CPU, it publishes 0 W and no rows are written, without a warning: `powerjoular -d` shows whether it can read the CPU.
 
 Default paths by OS:
 - **Linux**: `/dev/shm/powerjoular`
 - **macOS**: `/tmp/powerjoular`
+- **FreeBSD**: `/tmp/powerjoular`
 - **Windows**: `%PROGRAMDATA%\powerjoular`
 
 ```properties

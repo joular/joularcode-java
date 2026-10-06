@@ -22,6 +22,7 @@ power-source-type=
 # Default if left empty (OS-dependent):
 #   Linux:   /dev/shm/powerjoular
 #   macOS:   /tmp/powerjoular
+#   FreeBSD: /tmp/powerjoular
 #   Windows: %PROGRAMDATA%\powerjoular
 powerjoular-ringbuffer-path=
 

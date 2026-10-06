@@ -101,7 +101,7 @@ class ConfigTest {
 
         if (os.contains("win")) {
             assertTrue(path.endsWith("\\powerjoular"), path);
-        } else if (os.contains("mac")) {
+        } else if (os.contains("mac") || os.contains("freebsd")) {
             assertEquals("/tmp/powerjoular", path);
         } else {
             assertEquals("/dev/shm/powerjoular", path);
