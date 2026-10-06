@@ -7,6 +7,8 @@ Joular Code for Java is a lightweight and efficient Java agent for monitoring th
 
 This project is part of [Joular Code](https://github.com/joular/joularcode), and is the successor of [JoularJX](https://github.com/joular/joularjx).
 
+Detailed documentation (including user and reference guides) is available at: [https://joular.github.io/joularcode-java/](https://joular.github.io/joularcode-java/).
+
 ## :rocket: Features
 
 - Monitor power consumption and energy of each method and execution branch at runtime
