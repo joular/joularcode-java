@@ -12,6 +12,7 @@
 package org.noureddine.joular.joularcodejava.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +56,7 @@ class ConfigTest {
         assertEquals(10L, config.sampleRateMs());
         assertEquals(Path.of("joular-code-java-results"), config.resultsDir());
         assertTrue(config.appPrefixes().isEmpty());
+        assertFalse(config.linesMonitoring());
     }
 
     /** A value of blanks only is the same as no value. */
@@ -72,6 +74,7 @@ class ConfigTest {
                 vm-power-format = Watts
                 stack-monitoring-sample-rate = 50
                 results-path = out
+                lines-monitoring = True
                 """);
 
         assertEquals("ringbuffer", config.powerSourceType(), "the type is not case sensitive");
@@ -80,6 +83,7 @@ class ConfigTest {
         assertEquals("watts", config.vmPowerFormat());
         assertEquals(50L, config.sampleRateMs());
         assertEquals(Path.of("out"), config.resultsDir());
+        assertTrue(config.linesMonitoring());
     }
 
     @ParameterizedTest
@@ -114,13 +118,25 @@ class ConfigTest {
         Files.writeString(file, "stack-monitoring-sample-rate=25\n", StandardCharsets.UTF_8);
         System.setProperty("joularcodejava.properties", file.toString());
 
-        assertEquals(25L, Config.load().sampleRateMs());
+        assertEquals(25L, Config.load(null).sampleRateMs());
+    }
+
+    @Test
+    void load_agentArgumentComesBeforeSystemProperty() throws IOException {
+        Path given = tempDir.resolve("given.properties");
+        Path named = tempDir.resolve("named.properties");
+        Files.writeString(given, "stack-monitoring-sample-rate=30\n", StandardCharsets.UTF_8);
+        Files.writeString(named, "stack-monitoring-sample-rate=25\n", StandardCharsets.UTF_8);
+        System.setProperty("joularcodejava.properties", named.toString());
+
+        assertEquals(30L, Config.load(given.toString()).sampleRateMs());
+        assertEquals(25L, Config.load(" ").sampleRateMs());
     }
 
     @Test
     void load_missingFile_usesDefaults() {
         System.setProperty("joularcodejava.properties", tempDir.resolve("missing.properties").toString());
 
-        assertEquals(Config.DEFAULT_SAMPLE_RATE_MS, Config.load().sampleRateMs());
+        assertEquals(Config.DEFAULT_SAMPLE_RATE_MS, Config.load(null).sampleRateMs());
     }
 }

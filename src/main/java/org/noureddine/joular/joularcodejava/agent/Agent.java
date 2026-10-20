@@ -43,15 +43,15 @@ public final class Agent {
 
     /** Called when the agent is given on the command line. */
     public static void premain(String args, Instrumentation inst) {
-        start();
+        start(args);
     }
 
     /** Called when the agent is loaded into a running JVM. Only what happens after that is measured. */
     public static void agentmain(String args, Instrumentation inst) {
-        start();
+        start(args);
     }
 
-    private static synchronized void start() {
+    private static synchronized void start(String args) {
         if (activeMonitor != null && activeMonitor.isAlive()) {
             logger.log(Level.WARNING, "Joular Code for Java is already monitoring this JVM. Ignoring this attach.");
             return;
@@ -61,7 +61,7 @@ public final class Agent {
             configureLogging();
             printBanner();
 
-            Config config = Config.load();
+            Config config = Config.load(args);
             Monitor monitor = new Monitor(config, () -> PowerSource.open(config));
             monitor.start();
             Runtime.getRuntime().addShutdownHook(new Thread(monitor::stop, "Joular-Agent-Shutdown"));

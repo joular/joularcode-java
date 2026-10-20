@@ -54,3 +54,9 @@ results-path=
 # Several prefixes are separated by a comma, e.g. com.example,org.myapp; any match counts
 # Default if left empty: no filter (all branches go to both files)
 methods-filtering-prefix=
+
+# Provide measurements by line of code, as the JVM stack trace write them. Friles writtens are lines-power-all.csv and lines-power-app.csv (ex. com.example.Service.process(Service.java:120)).
+# The methods files stay the same
+# Options: true, false
+# Default if left empty: false
+lines-monitoring=

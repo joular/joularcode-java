@@ -31,7 +31,7 @@ class PowerSourceTest {
     Path tempDir;
 
     private Config config(String type, Path vmPowerFile, String vmPowerFormat) {
-        return new Config(type, tempDir.resolve("ring"), vmPowerFile, vmPowerFormat, 10, tempDir, List.of());
+        return new Config(type, tempDir.resolve("ring"), vmPowerFile, vmPowerFormat, 10, tempDir, List.of(), false);
     }
 
     private Config config(String type) {

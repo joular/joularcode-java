@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.noureddine.joular.joularcodejava.agent.BranchTest.branch;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -159,6 +160,34 @@ class PowerModelTest {
                 Map.of(1L, 8.0), branch -> branch.appName(prefixes));
 
         assertEquals(Map.of("com.app.Main.run", 2.0), power);
+    }
+
+    /** Telling lines apart splits the counts, but branchPower merges them back by name, so the methods files stay the same. */
+    @Test
+    void branchPower_linesMonitored_methodPowerUnchanged() {
+        StackTraceElement main = new StackTraceElement("a.Main", "main", "Main.java", 5);
+        List<StackTraceElement[]> stacks = List.of(
+                new StackTraceElement[] {new StackTraceElement("a.Worker", "compute", "Worker.java", 10), main},
+                new StackTraceElement[] {new StackTraceElement("a.Worker", "compute", "Worker.java", 10), main},
+                new StackTraceElement[] {new StackTraceElement("a.Worker", "compute", "Worker.java", 20), main},
+                new StackTraceElement[] {new StackTraceElement("a.Worker", "save", "Worker.java", 30), main});
+        Map<Branch, Integer> byMethod = new HashMap<>();
+        Map<Branch, Integer> byLine = new HashMap<>();
+        for (StackTraceElement[] stack : stacks) {
+            byMethod.merge(Branch.of(stack, false), 1, Integer::sum);
+            byLine.merge(Branch.of(stack, true), 1, Integer::sum);
+        }
+        Map<Long, Double> threadPower = Map.of(1L, 8.0);
+        List<String> prefixes = List.of("a.Worker");
+
+        assertEquals(PowerModel.branchPower(Map.of(1L, byMethod), threadPower, Branch::name),
+                PowerModel.branchPower(Map.of(1L, byLine), threadPower, Branch::name));
+        assertEquals(PowerModel.branchPower(Map.of(1L, byMethod), threadPower, branch -> branch.appName(prefixes)),
+                PowerModel.branchPower(Map.of(1L, byLine), threadPower, branch -> branch.appName(prefixes)));
+        assertEquals(Map.of("a.Main.main(Main.java:5);a.Worker.compute(Worker.java:10)", 4.0,
+                        "a.Main.main(Main.java:5);a.Worker.compute(Worker.java:20)", 2.0,
+                        "a.Main.main(Main.java:5);a.Worker.save(Worker.java:30)", 2.0),
+                PowerModel.branchPower(Map.of(1L, byLine), threadPower, Branch::lineName));
     }
 
     @Test

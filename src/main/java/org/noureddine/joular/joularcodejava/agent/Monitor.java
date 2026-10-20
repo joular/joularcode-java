@@ -15,11 +15,14 @@ import com.sun.management.OperatingSystemMXBean;
 import com.sun.management.ThreadMXBean;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.noureddine.joular.joularcodejava.agent.PowerModel.CpuUsage;
@@ -41,7 +44,8 @@ final class Monitor {
 
     private final Callable<PowerSource> powerSourceOpener;
     private final long sampleRateNs;
-    private final List<String> appPrefixes;
+    // Each results file and how it names a branch
+    private final Map<String, Function<Branch, String>> namings = new LinkedHashMap<>();
     private final ResultWriter results;
     private final OperatingSystemMXBean osBean;
     private final ThreadSampler sampler;
@@ -71,12 +75,23 @@ final class Monitor {
 
         this.powerSourceOpener = powerSourceOpener;
         this.sampleRateNs = TimeUnit.MILLISECONDS.toNanos(config.sampleRateMs());
-        this.appPrefixes = config.appPrefixes();
+        // Without a filter an app file shares its all file's function, and so its power, computed once
+        List<String> appPrefixes = config.appPrefixes();
+        Function<Branch, String> name = Branch::name;
+        namings.put(ResultWriter.ALL_METHODS_FILE, name);
+        namings.put(ResultWriter.APP_METHODS_FILE,
+                appPrefixes.isEmpty() ? name : branch -> branch.appName(appPrefixes));
+        if (config.linesMonitoring()) {
+            Function<Branch, String> lineName = Branch::lineName;
+            namings.put(ResultWriter.ALL_LINES_FILE, lineName);
+            namings.put(ResultWriter.APP_LINES_FILE,
+                    appPrefixes.isEmpty() ? lineName : branch -> branch.appLineName(appPrefixes));
+        }
         this.osBean = os;
-        this.results = new ResultWriter(config.resultsDir());
+        this.results = new ResultWriter(config.resultsDir(), namings.keySet());
         this.thread = new Thread(this::run, THREAD_NAME);
         this.thread.setDaemon(true);
-        this.sampler = new ThreadSampler(threadBean, thread.threadId());
+        this.sampler = new ThreadSampler(threadBean, thread.threadId(), config.linesMonitoring());
     }
 
     void start() {
@@ -214,12 +229,11 @@ final class Monitor {
                 Runtime.getRuntime().availableProcessors(), systemLoad);
         Map<Long, Double> threadPower = PowerModel.threadPower(usage, cpuPower * processShare);
 
-        Map<String, Double> allPower = PowerModel.branchPower(samples.branches, threadPower, Branch::name);
-        Map<String, Double> appPower = appPrefixes.isEmpty()
-                ? allPower
-                : PowerModel.branchPower(samples.branches, threadPower, branch -> branch.appName(appPrefixes));
-
-        results.write(allPower, appPower, System.currentTimeMillis(), intervalSeconds, usage.coverage());
+        Map<Function<Branch, String>, Map<String, Double>> powerByNaming = new IdentityHashMap<>();
+        Map<String, Map<String, Double>> powerByFile = new LinkedHashMap<>();
+        namings.forEach((file, naming) -> powerByFile.put(file, powerByNaming.computeIfAbsent(naming,
+                n -> PowerModel.branchPower(samples.branches, threadPower, n))));
+        results.write(powerByFile, System.currentTimeMillis(), intervalSeconds, usage.coverage());
     }
 
     private void warnIfOverrunning(Samples samples, double intervalSeconds) {

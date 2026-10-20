@@ -24,10 +24,12 @@ final class ThreadSampler {
 
     private final ThreadMXBean threadBean;
     private final long ownThreadId;
+    private final boolean lines;
 
-    ThreadSampler(ThreadMXBean threadBean, long ownThreadId) {
+    ThreadSampler(ThreadMXBean threadBean, long ownThreadId, boolean lines) {
         this.threadBean = threadBean;
         this.ownThreadId = ownThreadId;
+        this.lines = lines;
     }
 
     /** What was seen during one window. */
@@ -48,7 +50,7 @@ final class ThreadSampler {
             StackTraceElement[] stack = info.getStackTrace();
             if (stack.length > 0) {
                 samples.branches.computeIfAbsent(info.getThreadId(), id -> new HashMap<>())
-                        .merge(Branch.of(stack), 1, Integer::sum);
+                        .merge(Branch.of(stack, lines), 1, Integer::sum);
             }
         }
     }

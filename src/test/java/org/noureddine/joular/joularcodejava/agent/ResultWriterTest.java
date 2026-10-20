@@ -33,6 +33,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ResultWriterTest {
 
+    private static final List<String> FILES = List.of(ALL_METHODS_FILE, APP_METHODS_FILE);
+
     @TempDir
     Path tempDir;
 
@@ -41,8 +43,8 @@ class ResultWriterTest {
     }
 
     private void writeAll(Map<String, Double> power, double intervalSeconds) throws IOException {
-        try (ResultWriter writer = new ResultWriter(tempDir)) {
-            writer.write(power, Map.of(), 1000L, intervalSeconds, 1.0);
+        try (ResultWriter writer = new ResultWriter(tempDir, FILES)) {
+            writer.write(Map.of(ALL_METHODS_FILE, power), 1000L, intervalSeconds, 1.0);
         }
     }
 
@@ -53,7 +55,7 @@ class ResultWriterTest {
     @Test
     void open_createsTheDirectoryAndBothFilesWithAHeader() throws IOException {
         Path nested = tempDir.resolve("sub/nested");
-        new ResultWriter(nested).close();
+        new ResultWriter(nested, FILES).close();
 
         assertEquals(List.of(CSV_HEADER), Files.readAllLines(nested.resolve(ALL_METHODS_FILE)));
         assertEquals(List.of(CSV_HEADER), Files.readAllLines(nested.resolve(APP_METHODS_FILE)));
@@ -65,7 +67,7 @@ class ResultWriterTest {
         Path blockingFile = tempDir.resolve("blocked");
         Files.writeString(blockingFile, "not a directory");
 
-        assertThrows(IOException.class, () -> new ResultWriter(blockingFile));
+        assertThrows(IOException.class, () -> new ResultWriter(blockingFile, FILES));
     }
 
     /** A link planted where a results file goes must not make the agent, perhaps running as root, write through it. */
@@ -76,7 +78,7 @@ class ResultWriterTest {
         Files.writeString(target, "precious");
         Files.createSymbolicLink(tempDir.resolve(ALL_METHODS_FILE), target);
 
-        assertThrows(IOException.class, () -> new ResultWriter(tempDir));
+        assertThrows(IOException.class, () -> new ResultWriter(tempDir, FILES));
         assertEquals("precious", Files.readString(target));
     }
 
@@ -97,9 +99,9 @@ class ResultWriterTest {
 
     @Test
     void write_eachFileGetsItsOwnRows() throws IOException {
-        try (ResultWriter writer = new ResultWriter(tempDir)) {
-            writer.write(Map.of("java.lang.Thread.run;com.app.Main.run", 3.0), Map.of("com.app.Main.run", 3.0),
-                    1746000000000L, 1.0, 0.75);
+        try (ResultWriter writer = new ResultWriter(tempDir, FILES)) {
+            writer.write(Map.of(ALL_METHODS_FILE, Map.of("java.lang.Thread.run;com.app.Main.run", 3.0),
+                    APP_METHODS_FILE, Map.of("com.app.Main.run", 3.0)), 1746000000000L, 1.0, 0.75);
         }
 
         assertEquals("1746000000000,java.lang.Thread.run;com.app.Main.run,3.000000000,3.000000000,1.000000000,0.7500",
@@ -139,7 +141,7 @@ class ResultWriterTest {
 
     @Test
     void close_isIdempotent() throws IOException {
-        ResultWriter writer = new ResultWriter(tempDir);
+        ResultWriter writer = new ResultWriter(tempDir, FILES);
         assertDoesNotThrow(() -> {
             writer.close();
             writer.close();

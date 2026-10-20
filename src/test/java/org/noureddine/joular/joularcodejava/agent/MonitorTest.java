@@ -103,8 +103,15 @@ class MonitorTest {
     }
 
     private Monitor monitor(List<String> appPrefixes) throws IOException {
-        Config config = new Config("auto", tempDir.resolve("ring"), null, "powerjoular", 10, tempDir, appPrefixes);
-        monitor = new Monitor(config, () -> {
+        return monitor(appPrefixes, false);
+    }
+
+    private Config config(List<String> appPrefixes, boolean lines) {
+        return new Config("auto", tempDir.resolve("ring"), null, "powerjoular", 10, tempDir, appPrefixes, lines);
+    }
+
+    private Monitor monitor(List<String> appPrefixes, boolean lines) throws IOException {
+        monitor = new Monitor(config(appPrefixes, lines), () -> {
             source.openedOn = Thread.currentThread().getName();
             return source;
         });
@@ -158,6 +165,20 @@ class MonitorTest {
 
         assertTrue(rows(ResultWriter.APP_METHODS_FILE).stream().anyMatch(row -> row.contains("MonitorTest.lambda$")));
         assertFalse(rows(ResultWriter.ALL_METHODS_FILE).isEmpty());
+        assertFalse(Files.exists(tempDir.resolve(ResultWriter.ALL_LINES_FILE)));
+    }
+
+    @Test
+    void busyThread_linesMonitored_getsRowsInTheLinesFiles() throws Exception {
+        startBusyThread();
+        monitor(List.of(MonitorTest.class.getName()), true).start();
+
+        await(() -> !rows(ResultWriter.APP_LINES_FILE).isEmpty());
+
+        assertTrue(rows(ResultWriter.APP_LINES_FILE).stream().anyMatch(row -> row.contains("(MonitorTest.java:")));
+        assertFalse(rows(ResultWriter.ALL_LINES_FILE).isEmpty());
+        assertTrue(rows(ResultWriter.APP_METHODS_FILE).stream().noneMatch(row -> row.contains("(")),
+                "the methods files keep their names");
     }
 
     /** Without a reading there is no energy to share: nothing is written, and the loss is logged once. */
@@ -178,8 +199,7 @@ class MonitorTest {
     /** A source that cannot be opened ends monitoring with its reason, and nothing else. */
     @Test
     void openFailure_isLoggedAndMonitoringEnds() throws Exception {
-        Config config = new Config("auto", tempDir.resolve("ring"), null, "powerjoular", 10, tempDir, List.of());
-        monitor = new Monitor(config, () -> {
+        monitor = new Monitor(config(List.of(), false), () -> {
             throw new IOException("No power here.");
         });
         monitor.start();

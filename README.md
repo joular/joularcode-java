@@ -91,7 +91,7 @@ vm.detach();
 
 Monitoring covers the JVM from the moment it attaches, so whatever the application did before that is not in the results. JDK 21 and later allow the attach by default but print a warning: start the target JVM with `-XX:+EnableDynamicAgentLoading` to silence it, or with `-XX:-EnableDynamicAgentLoading` to forbid it.
 
-Configuration is read when the agent attaches, so `-Djoularcodejava.properties=...` belongs on the target JVM's own command line. Attaching a second time is ignored, with a warning, rather than starting a second monitor.
+Configuration is read when the agent attaches. Give its path as the agent's argument, `vm.loadAgent("/path/to/joularcodejava-<version>.jar", "/path/to/joularcodejava.properties")`, or with `jcmd <pid> JVMTI.agent_load /path/to/joularcodejava-<version>.jar /path/to/joularcodejava.properties`. Without it, the target JVM's own `-Djoularcodejava.properties=...`, or its working directory, is used. When trying to attach a second time, it is ignored, with a warning.
 
 ### Specifying a custom configuration file
 
@@ -100,6 +100,8 @@ By default, Joular Code for Java looks for `joularcodejava.properties` in the cu
 ```bash
 java -Djoularcodejava.properties=/path/to/joularcodejava.properties -javaagent:joularcodejava-<version>.jar -jar yourApplication.jar
 ```
+
+The agent's argument does the same, and comes first: `-javaagent:joularcodejava-<version>.jar=/path/to/joularcodejava.properties`.
 
 ## :gear: Configuration
 
@@ -121,6 +123,7 @@ A missing file, or a property left empty, means the default value will be used. 
 | `stack-monitoring-sample-rate` | `10` | Stack sampling interval in milliseconds, from 1 to 1000. Lower = more accurate but higher overhead |
 | `results-path` | `joular-code-java-results` | Directory where CSV result files are written |
 | `methods-filtering-prefix` | *(empty)* | Comma-separated list of package/class prefixes to filter app-specific methods (e.g., `com.example,org.myapp`) |
+| `lines-monitoring` | `false` | `true` also writes the power per source line, to `lines-power-all.csv` and `lines-power-app.csv` (see [Line monitoring](#line-monitoring)) |
 
 ### Power sources
 
@@ -186,18 +189,34 @@ methods-filtering-prefix=com.example,org.myapp
 - When set, `methods-power-app.csv` only contains branches where at least one stack element matches a prefix. Energy from unmatched (e.g., JDK) frames that are called by a matched method is attributed upward to the matched method.
 - `methods-power-all.csv` always contains every observed branch regardless of this setting.
 
+### Line monitoring
+
+When setting `lines-monitoring=true`, energy is also measured by line of code, and written to `lines-power-all.csv` and `lines-power-app.csv`, in the same format and with the same filtering as the methods files. Each call branch is written as the JVM stack trace writes it:
+
+```
+1746000000000,com.example.Main.main(Main.java:12);com.example.Service.process(Service.java:120),2.341500000,2.341500000,1.000000000,1.0000
+```
+
+The line of the newest branch is the line being executed, and the line of every other branch is the line calling the next branch. The methods files stay the same.
+
+- Thread dumps are taken at safepoints, which the JVM places on loop back edges, calls and returns, so samples gather on those lines: the energy per line is accurate to the loop or the block of statements, not to the single line.
+- Classes need line numbers in their debug information, which `javac` and Maven include by default. Without them a branch is written `(Service.java)`, and `(Unknown Source)` when the file is unknown too. Native methods are written `(Native Method)`.
+- Lines give more distinct branches than methods, so the files grow faster.
+
 ## :bar_chart: Generated Files
 
-Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced and appended to during execution (a new run adds its rows to the existing files):
+Joular Code for Java writes results into the directory configured by `results-path`. Two CSV files are produced, four with `lines-monitoring=true`, and appended to during execution (a new run adds its rows to the existing files):
 
 | File | Contents |
 |---|---|
 | `methods-power-all.csv` | Power and energy for all observed call branches, including JDK ones |
 | `methods-power-app.csv` | Power and energy for call branches filtered to your application's packages and methods |
+| `lines-power-all.csv` | As `methods-power-all.csv`, with the line of each call branch (only with `lines-monitoring=true`) |
+| `lines-power-app.csv` | As `methods-power-app.csv`, with the line of each call branch (only with `lines-monitoring=true`) |
 
 ### CSV format
 
-Both files share the same format:
+All files share the same format:
 
 ```
 timestamp,branch,power_watts,energy_joules,interval_seconds,coverage

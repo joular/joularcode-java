@@ -27,8 +27,8 @@ import java.util.logging.Logger;
 /**
  * The agent's configuration, read from {@code joularcodejava.properties}.
  *
- * <p>The file is the one named by the {@code joularcodejava.properties} system property, or else the one in the
- * working directory. A missing file or an empty value means the default.
+ * <p>The file is the one given as the agent's argument, else the one named by the {@code joularcodejava.properties}
+ * system property, else the one in the working directory. A missing file or an empty value means the default.
  *
  * @param powerSourceType {@code auto}, {@code rapl}, {@code ringbuffer} or {@code vm}
  * @param ringBufferPath  the ring buffer PowerJoular writes with {@code -r}
@@ -37,9 +37,10 @@ import java.util.logging.Logger;
  * @param sampleRateMs    how often the stacks are sampled, in milliseconds
  * @param resultsDir      where the CSV files are written
  * @param appPrefixes     what a frame must start with to be in the app file; empty means no filter
+ * @param linesMonitoring whether branches are also measured by line, and written to the lines files
  */
 record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, String vmPowerFormat,
-        long sampleRateMs, Path resultsDir, List<String> appPrefixes) {
+        long sampleRateMs, Path resultsDir, List<String> appPrefixes, boolean linesMonitoring) {
 
     private static final Logger logger = Logger.getLogger(Config.class.getName());
 
@@ -48,8 +49,10 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
     // Samples past a window's length would stretch the window itself
     private static final long MAX_SAMPLE_RATE_MS = 1000;
 
-    static Config load() {
-        String configuredPath = System.getProperty("joularcodejava.properties", "");
+    /** @param agentArgument the agent's argument, the only way to name the file for a JVM already running */
+    static Config load(String agentArgument) {
+        String configuredPath = agentArgument != null && !agentArgument.isBlank() ? agentArgument
+                : System.getProperty("joularcodejava.properties", "");
         Path file = Path.of(configuredPath.isBlank() ? "joularcodejava.properties" : configuredPath);
 
         Properties properties = new Properties();
@@ -74,7 +77,8 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
                 get(properties, "vm-power-format", "powerjoular").toLowerCase(Locale.ROOT),
                 sampleRate(get(properties, "stack-monitoring-sample-rate", "")),
                 Path.of(get(properties, "results-path", "joular-code-java-results")),
-                prefixes(get(properties, "methods-filtering-prefix", "")));
+                prefixes(get(properties, "methods-filtering-prefix", "")),
+                Boolean.parseBoolean(get(properties, "lines-monitoring", "false")));
     }
 
     private static String get(Properties properties, String key, String defaultValue) {

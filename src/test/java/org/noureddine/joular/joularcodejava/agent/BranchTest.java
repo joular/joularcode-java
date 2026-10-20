@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** Branch identity, which decides what adds up, and its two names, which feed the two result files. */
+/** Branch identity, which decides what adds up, and its names, which feed the result files. */
 class BranchTest {
 
     /**
@@ -34,7 +34,7 @@ class BranchTest {
             int lastDot = qualified.lastIndexOf('.');
             frames[i] = new StackTraceElement(qualified.substring(0, lastDot), qualified.substring(lastDot + 1), null, i);
         }
-        return Branch.of(frames);
+        return Branch.of(frames, false);
     }
 
     @Test
@@ -54,8 +54,37 @@ class BranchTest {
         StackTraceElement[] onLine10 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 10)};
         StackTraceElement[] onLine20 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 20)};
 
-        assertEquals(Branch.of(onLine10), Branch.of(onLine20));
-        assertEquals(Branch.of(onLine10).hashCode(), Branch.of(onLine20).hashCode());
+        assertEquals(Branch.of(onLine10, false), Branch.of(onLine20, false));
+        assertEquals(Branch.of(onLine10, false).hashCode(), Branch.of(onLine20, false).hashCode());
+    }
+
+    @Test
+    void equals_linesMonitored_differentLinesAreDifferentBranches() {
+        StackTraceElement[] onLine10 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 10)};
+        StackTraceElement[] alsoOnLine10 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 10)};
+        StackTraceElement[] onLine20 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 20)};
+
+        assertNotEquals(Branch.of(onLine10, true), Branch.of(onLine20, true));
+        assertEquals(Branch.of(onLine10, true), Branch.of(alsoOnLine10, true));
+        assertEquals(Branch.of(onLine10, true).hashCode(), Branch.of(alsoOnLine10, true).hashCode());
+    }
+
+    /** Each frame as a stack trace writes it, newest last, filtered as the app name is; the method names stay as they were. */
+    @Test
+    void lineName_writesEachFrameAsAStackTrace() {
+        Branch branch = Branch.of(new StackTraceElement[] {
+                new StackTraceElement("java.lang.Thread", "sleep0", "Thread.java", -2),
+                new StackTraceElement("a.Generated", "run", null, 7),
+                new StackTraceElement("a.Service", "process", "Service.java", -1),
+                new StackTraceElement("a.Main", "main", "Main.java", 12)}, true);
+
+        assertEquals("a.Main.main(Main.java:12);a.Service.process(Service.java);a.Generated.run(Unknown Source);"
+                + "java.lang.Thread.sleep0(Native Method)", branch.lineName());
+        assertEquals("a.Main.main(Main.java:12);a.Service.process(Service.java);a.Generated.run(Unknown Source)",
+                branch.appLineName(List.of("a.")));
+        assertEquals("", branch.appLineName(List.of("com.example")));
+        assertEquals("a.Main.main;a.Service.process;a.Generated.run;java.lang.Thread.sleep0", branch.name());
+        assertEquals("a.Main.main;a.Service.process;a.Generated.run", branch.appName(List.of("a.")));
     }
 
     @Test

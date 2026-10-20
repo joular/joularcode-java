@@ -16,38 +16,56 @@ import java.util.List;
 /**
  * A call branch: the stack of a thread, as the thread dump gives it (newest frame first).
  *
- * <p>Two stacks are the same branch when they go through the same methods, whatever the line numbers.
+ * <p>Two stacks are the same branch when they go through the same methods, whatever the line numbers, unless lines are monitored: then they must also be on the same lines.
  * Comparing frames is cheap next to building text, so the stacks are counted as they are, on every sample, and only written out as text once per window.
  */
 final class Branch {
 
     private final StackTraceElement[] frames;
+    private final boolean lines;
     private final int hash;
 
-    private Branch(StackTraceElement[] frames, int hash) {
+    private Branch(StackTraceElement[] frames, boolean lines, int hash) {
         this.frames = frames;
+        this.lines = lines;
         this.hash = hash;
     }
 
-    static Branch of(StackTraceElement[] frames) {
+    static Branch of(StackTraceElement[] frames, boolean lines) {
         int hash = 1;
         for (StackTraceElement frame : frames) {
             hash = 31 * (31 * hash + frame.getClassName().hashCode()) + frame.getMethodName().hashCode();
+            if (lines) {
+                hash = 31 * hash + frame.getLineNumber();
+            }
         }
-        return new Branch(frames, hash);
+        return new Branch(frames, lines, hash);
     }
 
     /** Every frame, oldest first, as {@code a.Main.main;a.Worker.compute}. */
     String name() {
-        return join(List.of());
+        return join(List.of(), false);
     }
 
     /** Only the frames that start with one of the prefixes, oldest first; empty when none does. */
     String appName(List<String> prefixes) {
-        return join(prefixes);
+        return join(prefixes, false);
     }
 
-    private String join(List<String> prefixes) {
+    /**
+     * Every branch, oldest first, with its line as a stack trace writes it:
+     * {@code a.Main.main(Main.java:5);a.Worker.compute(Worker.java:12)}.
+     */
+    String lineName() {
+        return join(List.of(), true);
+    }
+
+    /** As {@link #appName(List)}, with each frame's line. */
+    String appLineName(List<String> prefixes) {
+        return join(prefixes, true);
+    }
+
+    private String join(List<String> prefixes, boolean withLines) {
         StringBuilder name = new StringBuilder();
         for (int i = frames.length - 1; i >= 0; i--) {
             StackTraceElement frame = frames[i];
@@ -57,7 +75,13 @@ final class Branch {
             if (!name.isEmpty()) {
                 name.append(';');
             }
-            name.append(frame.getClassName()).append('.').append(frame.getMethodName());
+            if (withLines) {
+                // Without its module and class loader, the frame writes itself as a stack trace does
+                name.append(new StackTraceElement(frame.getClassName(), frame.getMethodName(), frame.getFileName(),
+                        frame.getLineNumber()));
+            } else {
+                name.append(frame.getClassName()).append('.').append(frame.getMethodName());
+            }
         }
         return name.toString();
     }
@@ -87,12 +111,14 @@ final class Branch {
 
     @Override
     public boolean equals(Object other) {
-        if (!(other instanceof Branch that) || hash != that.hash || frames.length != that.frames.length) {
+        if (!(other instanceof Branch that) || hash != that.hash || lines != that.lines
+                || frames.length != that.frames.length) {
             return false;
         }
         for (int i = 0; i < frames.length; i++) {
             if (!frames[i].getClassName().equals(that.frames[i].getClassName())
-                    || !frames[i].getMethodName().equals(that.frames[i].getMethodName())) {
+                    || !frames[i].getMethodName().equals(that.frames[i].getMethodName())
+                    || lines && frames[i].getLineNumber() != that.frames[i].getLineNumber()) {
                 return false;
             }
         }
