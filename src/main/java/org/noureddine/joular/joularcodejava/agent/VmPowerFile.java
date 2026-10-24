@@ -15,8 +15,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -28,21 +30,21 @@ import java.util.logging.Logger;
  * <ul>
  *   <li>{@code powerjoular}: the file PowerJoular rewrites every second with {@code -o} for a monitored process,
  *       one row of {@code timestamp,cpu_usage,cpu_power} and no header</li>
- *   <li>{@code watts}: the power alone, in watts, written by anything. It is used as it is.</li>
+ *   <li>{@code watts}: the power alone, in watts, written by anything. It is used as it is, however old.</li>
  * </ul>
  *
  * <p>The host writes automatically one-second cycle, which windows cannot follow through a shared folder, so a window may see the row the previous one saw, or catch the file while it is rewritten.
- * A row keeps covering for up to {@link #MAX_REUSES} more windows; after that, the host is taken to have stopped.
- * Its own timestamp tells, so the clocks of the host and the guest are never compared.
+ * A value keeps covering for up to {@link #MAX_REUSES} more windows; after that, the host is taken to have stopped.
+ * A row's own timestamp tells, so the clocks of the host and the guest are never compared; a bare power has none, so only a read that fails counts against it.
  */
 final class VmPowerFile implements PowerSource {
 
-    private static final Logger logger = Logger.getLogger(VmPowerFile.class.getName());
+    private static final Logger logger = Agent.logger(VmPowerFile.class);
 
     /** A power value never takes that many characters, so a longer line is not one. */
     private static final int MAX_LINE_LENGTH = 256;
 
-    /** How many more windows the last row covers when the next one cannot be read. */
+    /** How many more windows the last value covers when a new one cannot be read. */
     static final int MAX_REUSES = 2;
 
     private final Path file;
@@ -50,7 +52,8 @@ final class VmPowerFile implements PowerSource {
 
     /** The host's timestamp of the last row read, or -1 before the first one. */
     private long lastTimestamp = -1;
-    private double lastPower;
+    /** The last power read, or -1 before the first one. */
+    private double lastPower = -1;
     private int reuses = 0;
 
     private VmPowerFile(Path file, boolean powerJoularFormat) {
@@ -73,12 +76,13 @@ final class VmPowerFile implements PowerSource {
 
     @Override
     public double watts() throws IOException {
-        if (!powerJoularFormat) {
-            return parsePower(firstLine(false));
-        }
-
         IOException problem;
         try {
+            if (!powerJoularFormat) {
+                lastPower = parsePower(firstLine(false));
+                reuses = 0;
+                return lastPower;
+            }
             Row row = readRow();
             if (row.timestamp() != lastTimestamp) {
                 lastTimestamp = row.timestamp();
@@ -92,8 +96,8 @@ final class VmPowerFile implements PowerSource {
             problem = e;
         }
 
-        // The last row covers a window that saw no new one, for a little while
-        if (lastTimestamp < 0 || reuses == MAX_REUSES) {
+        // The last value covers a window that could not get a new one, for a little while
+        if (lastPower < 0 || reuses == MAX_REUSES) {
             throw problem;
         }
         reuses++;
@@ -129,12 +133,9 @@ final class VmPowerFile implements PowerSource {
      *                 host was writing it, and a cut number still parses
      */
     private String firstLine(boolean complete) throws IOException {
-        // A pipe or a device would block the open until someone writes to it; a missing file is reported below
-        if (Files.exists(file) && !Files.isRegularFile(file)) {
-            throw new IOException(file + " is not a regular file.");
-        }
         byte[] start;
-        try (InputStream input = Files.newInputStream(file)) {
+        // Not following links: the share may be writable by others, and the agent may run as root
+        try (InputStream input = Files.newInputStream(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             start = input.readNBytes(MAX_LINE_LENGTH + 1);
         } catch (NoSuchFileException e) {
             throw new IOException("There is no " + file + ". Is it shared with this virtual machine, and is the host"

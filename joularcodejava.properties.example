@@ -11,14 +11,14 @@
 #
 # CPU power source
 # Options:
-#   auto (RAPL on Linux, the PowerJoular ring buffer everywhere else, including Linux machines without RAPL such as the Raspberry Pi)
+#   auto (the first that opens: RAPL where there is one and it is readable, then the PowerJoular ring buffer, then the virtual machine file)
 #   rapl (read Linux RAPL directly, from /sys/class/powercap)
 #   ringbuffer (read the shared memory ring buffer PowerJoular writes with -r)
 #   vm (inside a virtual machine, read the file the host writes the power of this virtual machine to, see vm-power-file)
 # Default if left empty: auto
 power-source-type=
 
-# Path to the ring buffer (used by ringbuffer, and by auto on a machine without RAPL)
+# Path to the ring buffer (used by ringbuffer, and by auto on a machine without a readable RAPL)
 # Default if left empty (OS-dependent):
 #   Linux:   /dev/shm/powerjoular
 #   macOS:   /tmp/powerjoular
@@ -34,7 +34,7 @@ vm-power-file=
 # The format of the virtual machine file (if power-source-type is vm)
 # Options:
 #   powerjoular (the row PowerJoular rewrites every second with -o for a process: timestamp,cpu_usage,cpu_power)
-#   watts (the power alone, in watts, used as it is)
+#   watts (the power alone, in watts, used as it is; when it cannot be read, the last value covers up to two more cycles)
 # Default if left empty: powerjoular
 vm-power-format=
 
@@ -45,18 +45,28 @@ vm-power-format=
 # Default if left empty: 10 (good balance between accuracy and efficiency)
 stack-monitoring-sample-rate=
 
-# Output folder for results
+# How many frames of each thread's stack are kept, from the newest one
+# A deeper stack loses its oldest frames, so its branch starts lower; a smaller value makes sampling cheaper
+# Default if left empty: 64
+max-stack-depth=
+
+# Output folder for results. Each run writes into its own sub-folder, <pid>-<yyyyMMdd-HHmmss>
 # Default if left empty: joular-code-java-results
 results-path=
 
 # Only frames whose package.class.method starts with one of these prefixes are filtered and calculated and written to methods-power-app.csv
-# methods-power-all.csv always have every branch (including those of the JDK)
+# methods-power-all.csv always has every branch (including those of the JDK)
 # Several prefixes are separated by a comma, e.g. com.example,org.myapp; any match counts
 # Default if left empty: no filter (all branches go to both files)
 methods-filtering-prefix=
 
-# Provide measurements by line of code, as the JVM stack trace write them. Friles writtens are lines-power-all.csv and lines-power-app.csv (ex. com.example.Service.process(Service.java:120)).
+# Provide measurements by line of code, as the JVM stack trace writes them. Files written are lines-power-all.csv, lines-power-app.csv (ex. com.example.Service.process(Service.java:120)) and lines-power-app-self.csv (the total of each line of the application itself)
 # The methods files stay the same
 # Options: true, false
 # Default if left empty: false
 lines-monitoring=
+
+# Write one row per branch when the JVM stops, with its energy and average power over the whole run, instead of a row per monitoring cycle
+# Options: true, false
+# Default if left empty: false
+aggregate=

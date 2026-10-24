@@ -18,7 +18,6 @@ import static org.noureddine.joular.joularcodejava.agent.BranchTest.branch;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.noureddine.joular.joularcodejava.agent.PowerModel.CpuUsage;
 
@@ -64,7 +63,7 @@ class PowerModelTest {
     /** A thread that used CPU without being sampled still counts in the total, so the sampled ones are not overpaid. */
     @Test
     void cpuUsage_unsampledThreadStaysInTheTotal() {
-        CpuUsage usage = PowerModel.cpuUsage(Set.of(1L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 300L, 2L, 700L));
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 300L, 2L, 700L));
 
         assertEquals(1000L, usage.totalNs(), "both threads' CPU time counts");
         assertEquals(Map.of(1L, 300L), usage.sampledThreadsNs(), "only the sampled one is paid");
@@ -74,15 +73,28 @@ class PowerModelTest {
     /** A thread missing from the start snapshot began inside the window, so all its CPU time was spent there. */
     @Test
     void cpuUsage_threadStartedMidWindow_countsAllOfItsCpuTime() {
-        CpuUsage usage = PowerModel.cpuUsage(Set.of(7L), Map.of(), Map.of(7L, 500L));
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(7L, 0L), Map.of(), Map.of(7L, 500L));
 
         assertEquals(500L, usage.totalNs());
         assertEquals(1.0, usage.coverage(), 1e-9);
     }
 
+    /**
+     * A sampled thread gone from the end snapshot ended inside the window.
+     * It keeps what it used up to its last sample, instead of handing it to the threads still alive.
+     */
+    @Test
+    void cpuUsage_sampledThreadEndedMidWindow_keepsItsLastSeenCpuTime() {
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 400L, 2L, 600L), Map.of(1L, 100L, 2L, 100L), Map.of(1L, 500L));
+
+        assertEquals(Map.of(1L, 400L, 2L, 500L), usage.sampledThreadsNs(), "the live one is read at the end");
+        assertEquals(900L, usage.totalNs());
+        assertEquals(1.0, usage.coverage(), 1e-9);
+    }
+
     @Test
     void cpuUsage_idleThreadIgnored() {
-        CpuUsage usage = PowerModel.cpuUsage(Set.of(1L), Map.of(1L, 100L, 2L, 900L), Map.of(1L, 600L, 2L, 900L));
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 100L, 2L, 900L), Map.of(1L, 600L, 2L, 900L));
 
         assertEquals(500L, usage.totalNs());
         assertEquals(1.0, usage.coverage(), 1e-9, "the idle thread is not missing coverage");
@@ -90,7 +102,7 @@ class PowerModelTest {
 
     @Test
     void cpuUsage_noCpuUsed_coverageIsZero() {
-        CpuUsage usage = PowerModel.cpuUsage(Set.of(1L), Map.of(1L, 100L), Map.of(1L, 100L));
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 100L), Map.of(1L, 100L), Map.of(1L, 100L));
 
         assertEquals(0L, usage.totalNs());
         assertEquals(0.0, usage.coverage(), 1e-9);
@@ -115,7 +127,7 @@ class PowerModelTest {
      */
     @Test
     void threadPower_unobservedShareIsLeftUnattributed() {
-        CpuUsage usage = PowerModel.cpuUsage(Set.of(1L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 250L, 2L, 750L));
+        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 250L, 2L, 750L));
 
         Map<Long, Double> power = PowerModel.threadPower(usage, 80.0);
 

@@ -54,9 +54,11 @@ class ConfigTest {
         assertNull(config.vmPowerFile());
         assertEquals("powerjoular", config.vmPowerFormat());
         assertEquals(10L, config.sampleRateMs());
+        assertEquals(Config.DEFAULT_MAX_STACK_DEPTH, config.maxStackDepth());
         assertEquals(Path.of("joular-code-java-results"), config.resultsDir());
         assertTrue(config.appPrefixes().isEmpty());
         assertFalse(config.linesMonitoring());
+        assertFalse(config.aggregate());
     }
 
     /** A value of blanks only is the same as no value. */

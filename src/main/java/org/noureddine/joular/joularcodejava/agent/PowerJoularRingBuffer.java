@@ -32,15 +32,16 @@ import java.util.logging.Logger;
  *
  * <pre>
  *   Offset 0  : u64 head, the number of cycles written so far
- *   Offset 8  : entry[0], then entry[1] ... entry[4], 48 bytes each
+ *   Offset 8  : entry[0], then entry[1] ... entry[4], 56 bytes each
  *   Each entry:
  *     +0  u64 timestamp      (Unix seconds)
  *     +8  f64 cpu_power      (watts)  &lt;- read here
  *     +16 f64 gpu_power
  *     +24 f64 total_power
  *     +32 f64 cpu_usage
- *     +40 f64 pid_app_power
- *   Total: 8 + 5 * 48 = 248 bytes
+ *     +40 f64 pid_app_power  (watts, -1 when PowerJoular follows no process)
+ *     +48 f64 pid_app_usage  (0.0 to 1.0, -1 when PowerJoular follows no process)  &lt;- read here
+ *   Total: 8 + 5 * 56 = 288 bytes
  * </pre>
  *
  * <p>PowerJoular writes entry {@code head mod 5}, then increments {@code head}, once a second.
@@ -54,12 +55,13 @@ import java.util.logging.Logger;
  */
 final class PowerJoularRingBuffer implements PowerSource {
 
-    private static final Logger logger = Logger.getLogger(PowerJoularRingBuffer.class.getName());
+    private static final Logger logger = Agent.logger(PowerJoularRingBuffer.class);
 
-    static final int ENTRY_SIZE = 48;
+    static final int ENTRY_SIZE = 56;
     static final int ENTRY_COUNT = 5;
     static final int FILE_SIZE = 8 + ENTRY_COUNT * ENTRY_SIZE;
     private static final int CPU_POWER_OFFSET = 8;
+    private static final int PID_APP_USAGE_OFFSET = 48;
 
     /** How long a window waits for PowerJoular's next cycle. */
     static final long MAX_WINDOW_NS = 2 * ONE_SECOND_NS;
@@ -74,6 +76,8 @@ final class PowerJoularRingBuffer implements PowerSource {
 
     /** The head when the current window began. */
     private long windowStartHead;
+
+    private double pidAppUsage = -1;
 
     private PowerJoularRingBuffer(Path path) {
         this.path = path;
@@ -127,6 +131,7 @@ final class PowerJoularRingBuffer implements PowerSource {
         int offset = 8 + (int) ((head - 1) % ENTRY_COUNT) * ENTRY_SIZE;
         long timestamp = buffer.getLong(offset);
         double power = buffer.getDouble(offset + CPU_POWER_OFFSET);
+        double appUsage = buffer.getDouble(offset + PID_APP_USAGE_OFFSET);
 
         VarHandle.acquireFence();
         if (buffer.getLong(0) != head) {
@@ -144,7 +149,13 @@ final class PowerJoularRingBuffer implements PowerSource {
         if (!Double.isFinite(power) || power < 0) {
             throw new IOException("PowerJoular could not measure the CPU power (it wrote " + power + ").");
         }
+        pidAppUsage = appUsage;
         return power;
+    }
+
+    /** The CPU usage of the process PowerJoular follows, from 0 to 1, as of the last reading; -1 when it follows none. */
+    double pidAppUsage() {
+        return pidAppUsage;
     }
 
     @Override

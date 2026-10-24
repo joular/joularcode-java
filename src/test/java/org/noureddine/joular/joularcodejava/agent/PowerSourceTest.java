@@ -31,7 +31,8 @@ class PowerSourceTest {
     Path tempDir;
 
     private Config config(String type, Path vmPowerFile, String vmPowerFormat) {
-        return new Config(type, tempDir.resolve("ring"), vmPowerFile, vmPowerFormat, 10, tempDir, List.of(), false);
+        return new Config(type, tempDir.resolve("ring"), vmPowerFile, vmPowerFormat, 10, Config.DEFAULT_MAX_STACK_DEPTH,
+                tempDir, List.of(), false, false);
     }
 
     private Config config(String type) {

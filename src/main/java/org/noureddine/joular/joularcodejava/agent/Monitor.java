@@ -15,6 +15,7 @@ import com.sun.management.OperatingSystemMXBean;
 import com.sun.management.ThreadMXBean;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Path;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,7 +35,7 @@ import org.noureddine.joular.joularcodejava.agent.ThreadSampler.Samples;
  */
 final class Monitor {
 
-    private static final Logger logger = Logger.getLogger(Monitor.class.getName());
+    private static final Logger logger = Agent.logger(Monitor.class);
 
     static final String THREAD_NAME = "Joular-Agent-Monitor";
 
@@ -46,11 +47,16 @@ final class Monitor {
     private final long sampleRateNs;
     // Each results file and how it names a branch
     private final Map<String, Function<Branch, String>> namings = new LinkedHashMap<>();
-    private final ResultWriter results;
+    private final Path resultsDir;
+    private final boolean aggregate;
     private final OperatingSystemMXBean osBean;
     private final ThreadSampler sampler;
     private final Thread thread;
 
+    /** Opened on the monitor thread, after the power source. */
+    private ResultWriter results;
+    // The machine's load from /proc/stat where there is one, else from the JVM
+    private boolean procStat = ProcStat.isAvailable();
     private volatile boolean running = true;
     private boolean powerLost = false;
     private boolean windowErrorLogged = false;
@@ -58,11 +64,11 @@ final class Monitor {
     private boolean lowCoverageWarned = false;
 
     /**
-     * Checks the JVM and opens the results files. The power source is opened later, on the monitor thread.
+     * Checks the JVM. The power source and the results files are opened later, on the monitor thread.
      *
      * @throws IllegalStateException if this JVM cannot report the CPU time of its threads and of itself
      */
-    Monitor(Config config, Callable<PowerSource> powerSourceOpener) throws IOException {
+    Monitor(Config config, Callable<PowerSource> powerSourceOpener) {
         if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean threadBean)
                 || !threadBean.isThreadCpuTimeSupported()) {
             throw new IllegalStateException("Unsupported JVM: it cannot report the CPU time of its threads.");
@@ -86,12 +92,15 @@ final class Monitor {
             namings.put(ResultWriter.ALL_LINES_FILE, lineName);
             namings.put(ResultWriter.APP_LINES_FILE,
                     appPrefixes.isEmpty() ? lineName : branch -> branch.appLineName(appPrefixes));
+            namings.put(ResultWriter.APP_LINES_SELF_FILE, branch -> branch.selfLineName(appPrefixes));
         }
+        this.resultsDir = ResultWriter.runDir(config.resultsDir());
+        this.aggregate = config.aggregate();
         this.osBean = os;
-        this.results = new ResultWriter(config.resultsDir(), namings.keySet());
         this.thread = new Thread(this::run, THREAD_NAME);
         this.thread.setDaemon(true);
-        this.sampler = new ThreadSampler(threadBean, thread.threadId(), config.linesMonitoring());
+        this.sampler = new ThreadSampler(threadBean, thread.threadId(), config.linesMonitoring(),
+                config.maxStackDepth());
     }
 
     void start() {
@@ -100,6 +109,11 @@ final class Monitor {
 
     boolean isAlive() {
         return thread.isAlive();
+    }
+
+    /** Where this run's files go, once the power source is open. */
+    Path resultsDir() {
+        return resultsDir;
     }
 
     /** Stops the loop and waits a little for it to close the source and the files. */
@@ -114,20 +128,38 @@ final class Monitor {
         }
     }
 
-    /** CPU times at one instant. */
-    private record CpuSnapshot(long nanoTime, long processCpuNs, Map<Long, Long> threadCpuNs) {
+    /** CPU times at one instant. {@code machine} is null where /proc/stat cannot be read. */
+    private record CpuSnapshot(long nanoTime, long processCpuNs, Map<Long, Long> threadCpuNs,
+            ProcStat.Reading machine) {
     }
 
     private CpuSnapshot snapshot() {
         // The monitor's own thread is taken out of the JVM's CPU time, as it is out of the threads'
         return new CpuSnapshot(System.nanoTime(), osBean.getProcessCpuTime() - sampler.ownCpuTime(),
-                sampler.cpuTimes());
+                sampler.cpuTimes(), machine());
+    }
+
+    private ProcStat.Reading machine() {
+        if (!procStat) {
+            return null;
+        }
+        try {
+            return ProcStat.read();
+        } catch (IOException e) {
+            logger.log(Level.WARNING, "Cannot read /proc/stat, using the JVM's own CPU load instead.", e);
+            procStat = false;
+            // The first getCpuLoad covers nothing
+            osBean.getCpuLoad();
+            return null;
+        }
     }
 
     private void run() {
         // Nothing may escape: the monitor must never disturb the application
         try (PowerSource powerSource = powerSourceOpener.call()) {
-            monitor(powerSource);
+            if (openResults()) {
+                monitor(powerSource);
+            }
         } catch (IOException e) {
             // The message says what to fix, a stack trace would only bury it
             logger.log(Level.SEVERE, "Cannot measure the CPU power: " + e.getMessage()
@@ -135,13 +167,30 @@ final class Monitor {
         } catch (Throwable t) {
             logger.log(Level.SEVERE, "Monitoring stopped on an unexpected error, the application carries on.", t);
         } finally {
-            results.close();
+            if (results != null) {
+                results.close();
+            }
+        }
+    }
+
+    /** Once the source is open, so a source that cannot be opened leaves no header-only files behind. */
+    private boolean openResults() {
+        try {
+            results = new ResultWriter(resultsDir, namings.keySet(), aggregate);
+            logger.log(Level.INFO, "Results are written to " + resultsDir.toAbsolutePath());
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Cannot write the results to " + resultsDir.toAbsolutePath()
+                    + ". Monitoring is off, the application carries on.", e);
+            return false;
         }
     }
 
     private void monitor(PowerSource powerSource) {
-        // getCpuLoad covers the time since its previous call, by anyone in this JVM, so the first one covers nothing
-        osBean.getCpuLoad();
+        if (!procStat) {
+            // getCpuLoad covers the time since its previous call, by anyone in this JVM, so the first one covers nothing
+            osBean.getCpuLoad();
+        }
 
         // Each window starts where the previous one ended, so the time spent writing results is not lost
         CpuSnapshot windowStart = snapshot();
@@ -160,15 +209,18 @@ final class Monitor {
     /** Runs one window and returns the snapshot it ended on, which the next window starts from. */
     private CpuSnapshot runWindow(PowerSource powerSource, CpuSnapshot start) {
         Samples samples = sampleWindow(powerSource, start.nanoTime());
-        if (!running) {
-            // Cut short by shutdown: a fraction of a window is not worth a row
+        if (!running && !powerSource.measuresSincePreviousCall()) {
+            // Cut short by shutdown: the power of a fraction of a window is only known to a source that measures up to now
             return start;
         }
         CpuSnapshot end = snapshot();
         // Read right after the snapshot, so the power and the CPU times cover the same window
         double cpuPower = readPower(powerSource);
-        double systemLoad = osBean.getCpuLoad();
-        writeResults(samples, start, end, cpuPower, systemLoad);
+        boolean machine = start.machine() != null && end.machine() != null;
+        // Over this window only, where getCpuLoad covers the time since anyone in the JVM last called it
+        double systemLoad = machine ? start.machine().loadUntil(end.machine()) : osBean.getCpuLoad();
+        int cpus = machine ? end.machine().cpus() : Runtime.getRuntime().availableProcessors();
+        writeResults(samples, start, end, cpuPower, systemLoad, cpus);
         return end;
     }
 
@@ -217,16 +269,16 @@ final class Monitor {
     }
 
     private void writeResults(Samples samples, CpuSnapshot start, CpuSnapshot end, double cpuPower,
-            double systemLoad) {
+            double systemLoad, int cpus) {
         long elapsedNs = end.nanoTime() - start.nanoTime();
         double intervalSeconds = elapsedNs / 1e9;
         warnIfOverrunning(samples, intervalSeconds);
 
-        CpuUsage usage = PowerModel.cpuUsage(samples.branches.keySet(), start.threadCpuNs(), end.threadCpuNs());
+        CpuUsage usage = PowerModel.cpuUsage(samples.lastCpuNs, start.threadCpuNs(), end.threadCpuNs());
         warnIfLowCoverage(usage.coverage());
 
-        double processShare = PowerModel.processShare(end.processCpuNs() - start.processCpuNs(), elapsedNs,
-                Runtime.getRuntime().availableProcessors(), systemLoad);
+        double processShare = PowerModel.processShare(end.processCpuNs() - start.processCpuNs(), elapsedNs, cpus,
+                systemLoad);
         Map<Long, Double> threadPower = PowerModel.threadPower(usage, cpuPower * processShare);
 
         Map<Function<Branch, String>, Map<String, Double>> powerByNaming = new IdentityHashMap<>();
@@ -257,9 +309,9 @@ final class Monitor {
         boolean low = coverage > 0 && coverage < LOW_COVERAGE_THRESHOLD;
         if (low && !lowCoverageWarned) {
             logger.log(Level.WARNING, "Only " + Math.round(coverage * 100) + "% of this JVM's CPU time belonged to"
-                    + " threads that were sampled, so the power reported per method is a lower bound. Short-lived"
-                    + " threads and virtual threads, which the JVM does not report here, are the usual causes;"
-                    + " a sample rate too coarse for the number of threads is another.");
+                    + " threads that were sampled, so the power reported per method is a lower bound. Virtual"
+                    + " threads, which the JVM does not report here, and threads that end before a sample catches"
+                    + " them are the usual causes; a sample rate too coarse for the number of threads is another.");
         }
         lowCoverageWarned = low;
     }

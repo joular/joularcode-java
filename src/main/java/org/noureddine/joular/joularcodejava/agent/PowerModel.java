@@ -13,7 +13,6 @@ package org.noureddine.joular.joularcodejava.agent;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -34,8 +33,9 @@ import java.util.function.Function;
  * <p>The JVM's native threads (GC, JIT) are in {@code processPower} but in no Java thread's CPU time, so their
  * share is spread over the Java threads in proportion to theirs.
  *
- * <p>Blind spots: threads that end inside a window (their CPU time is no longer reported), virtual threads
- * (not in thread dumps), and whether a sampled thread was actually on a CPU at that instant.
+ * <p>A sampled thread that ends inside a window is charged up to the sample that last saw it, since the JVM stops
+ * reporting its CPU time once it has ended. Blind spots: threads that end without ever being sampled, virtual
+ * threads (not in thread dumps), and whether a sampled thread was actually on a CPU at that instant.
  */
 final class PowerModel {
 
@@ -47,7 +47,8 @@ final class PowerModel {
      *
      * @param processCpuNs CPU time the whole JVM used over the window
      * @param elapsedNs    the window's length
-     * @param cpus         the processors available to the JVM
+     * @param cpus         the processors {@code systemLoad} is over: the machine's, which in a container are the
+     *                     host's, not the few the cgroup lets the JVM see
      * @param systemLoad   the machine's CPU load over the window, from 0 to 1; 0, negative or NaN when unknown
      * @return a share from 0 to 1
      */
@@ -73,13 +74,22 @@ final class PowerModel {
     record CpuUsage(Map<Long, Long> sampledThreadsNs, long totalNs, double coverage) {
     }
 
-    /** Compares two CPU-time snapshots, keyed by thread id. */
-    static CpuUsage cpuUsage(Set<Long> sampledThreads, Map<Long, Long> start, Map<Long, Long> end) {
+    /**
+     * Compares two CPU-time snapshots, keyed by thread id.
+     *
+     * @param sampledLastNs per sampled thread, its CPU time when it was last sampled: where one that is gone from
+     *                      {@code end}, having ended inside the window, is charged up to
+     */
+    static CpuUsage cpuUsage(Map<Long, Long> sampledLastNs, Map<Long, Long> start, Map<Long, Long> end) {
+        // The live threads are read at the end; a sampled one missing there keeps its last reading
+        Map<Long, Long> endNs = new HashMap<>(sampledLastNs);
+        endNs.putAll(end);
+
         Map<Long, Long> sampledThreadsNs = new HashMap<>();
         long totalNs = 0;
         long sampledNs = 0;
 
-        for (Map.Entry<Long, Long> entry : end.entrySet()) {
+        for (Map.Entry<Long, Long> entry : endNs.entrySet()) {
             long threadId = entry.getKey();
             // A thread missing from the start snapshot began inside the window (thread ids are never reused)
             long usedNs = entry.getValue() - start.getOrDefault(threadId, 0L);
@@ -87,7 +97,7 @@ final class PowerModel {
                 continue;
             }
             totalNs += usedNs;
-            if (sampledThreads.contains(threadId)) {
+            if (sampledLastNs.containsKey(threadId)) {
                 sampledNs += usedNs;
                 sampledThreadsNs.put(threadId, usedNs);
             }

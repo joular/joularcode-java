@@ -27,7 +27,7 @@ class ThreadSamplerTest {
 
     @Test
     void sample_recordsTheRunningTestThread() {
-        ThreadSampler sampler = new ThreadSampler(threadBean, -1, false);
+        ThreadSampler sampler = new ThreadSampler(threadBean, -1, false, 64);
         Samples samples = new Samples();
 
         sampler.sample(samples);
@@ -41,7 +41,7 @@ class ThreadSamplerTest {
     @Test
     void ownThread_isLeftOut() {
         long self = Thread.currentThread().threadId();
-        ThreadSampler sampler = new ThreadSampler(threadBean, self, false);
+        ThreadSampler sampler = new ThreadSampler(threadBean, self, false, 64);
         Samples samples = new Samples();
 
         sampler.sample(samples);

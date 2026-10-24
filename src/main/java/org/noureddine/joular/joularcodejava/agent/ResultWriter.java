@@ -18,6 +18,8 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Locale;
@@ -26,26 +28,43 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Appends each window's power per branch to the CSV files of the results directory: every branch, and the branches of the application only.
+ * Appends each window's power per branch to the CSV files of the run's directory: every branch, and the branches of the application only.
  * The lines files, written only when lines are monitored, have the same branches with each frame's line.
+ *
+ * <p>With {@code aggregate}, nothing is written until {@link #close()}: then each file gets one row per branch, with
+ * its energy over the run and its average power.
  */
 final class ResultWriter implements AutoCloseable {
 
-    private static final Logger logger = Logger.getLogger(ResultWriter.class.getName());
+    private static final Logger logger = Agent.logger(ResultWriter.class);
 
     static final String ALL_METHODS_FILE = "methods-power-all.csv";
     static final String APP_METHODS_FILE = "methods-power-app.csv";
     static final String ALL_LINES_FILE = "lines-power-all.csv";
     static final String APP_LINES_FILE = "lines-power-app.csv";
-    static final String CSV_HEADER = "timestamp,branch,power_watts,energy_joules,interval_seconds,coverage";
+    static final String APP_LINES_SELF_FILE = "lines-power-app-self.csv";
+    static final String CSV_HEADER = "Timestamp,branch,power_watts,energy_joules,interval_seconds,coverage";
+
+    private static final DateTimeFormatter START = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
 
     private final Path resultsDir;
+    private final boolean aggregate;
     private final Map<String, BufferedWriter> writers = new HashMap<>();
+    // With aggregate, each file's energy per branch, summed until close
+    private final Map<String, Map<String, Double>> energyByFile = new HashMap<>();
+    private double totalSeconds = 0;
+    private double coverageSeconds = 0;
     private boolean writeErrorLogged = false;
 
-    /** Creates the results directory and opens the files, so a path that cannot be written to fails at startup. */
-    ResultWriter(Path resultsDir, Collection<String> files) throws IOException {
+    /** The folder of one run in the results directory, {@code <pid>-<start>}, so runs never mix. */
+    static Path runDir(Path resultsDir) {
+        return resultsDir.resolve(ProcessHandle.current().pid() + "-" + LocalDateTime.now().format(START));
+    }
+
+    /** Creates the directory and opens the files, so a path that cannot be written to fails at startup. */
+    ResultWriter(Path resultsDir, Collection<String> files, boolean aggregate) throws IOException {
         this.resultsDir = resultsDir;
+        this.aggregate = aggregate;
         Files.createDirectories(resultsDir);
         try {
             for (String file : files) {
@@ -58,13 +77,21 @@ final class ResultWriter implements AutoCloseable {
     }
 
     /**
-     * Appends one row per branch with a positive power, to each file.
+     * Appends one row per branch with a positive power, to each file; or, with {@code aggregate}, adds the window to
+     * the totals.
      *
      * @param powerByFile each file's power per branch
      * @param coverage the share of the JVM's CPU time that belonged to sampled threads; below 1.0 the rows are a lower bound
      */
     void write(Map<String, Map<String, Double>> powerByFile, long timestampMs, double intervalSeconds,
             double coverage) {
+        if (aggregate) {
+            powerByFile.forEach((file, branchPower) -> branchPower.forEach((branch, power) -> energyByFile
+                    .computeIfAbsent(file, f -> new HashMap<>()).merge(branch, power * intervalSeconds, Double::sum)));
+            totalSeconds += intervalSeconds;
+            coverageSeconds += coverage * intervalSeconds;
+            return;
+        }
         try {
             for (Map.Entry<String, Map<String, Double>> entry : powerByFile.entrySet()) {
                 append(entry.getKey(), entry.getValue(), timestampMs, intervalSeconds, coverage);
@@ -72,7 +99,7 @@ final class ResultWriter implements AutoCloseable {
             writeErrorLogged = false;
         } catch (IOException e) {
             // Drop the writers so the next window opens the files again
-            close();
+            closeWriters();
             if (!writeErrorLogged) {
                 logger.log(Level.SEVERE, "Could not write results to " + resultsDir, e);
                 writeErrorLogged = true;
@@ -80,9 +107,32 @@ final class ResultWriter implements AutoCloseable {
         }
     }
 
-    /** Flushes and closes the files. Safe to call more than once. */
+    /** Writes the totals, with {@code aggregate}, then flushes and closes the files. Safe to call more than once. */
     @Override
     public void close() {
+        if (totalSeconds > 0) {
+            writeTotals();
+        }
+        closeWriters();
+    }
+
+    /** One row per branch: its average power over the run, its energy, the run's length and its average coverage. */
+    private void writeTotals() {
+        long now = System.currentTimeMillis();
+        try {
+            for (Map.Entry<String, Map<String, Double>> entry : energyByFile.entrySet()) {
+                Map<String, Double> power = new HashMap<>();
+                entry.getValue().forEach((branch, energy) -> power.put(branch, energy / totalSeconds));
+                append(entry.getKey(), power, now, totalSeconds, coverageSeconds / totalSeconds);
+            }
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Could not write the totals to " + resultsDir, e);
+        }
+        energyByFile.clear();
+        totalSeconds = 0;
+    }
+
+    private void closeWriters() {
         for (BufferedWriter writer : writers.values()) {
             try {
                 writer.close();
@@ -102,7 +152,8 @@ final class ResultWriter implements AutoCloseable {
         for (Map.Entry<String, Double> entry : branchPower.entrySet()) {
             double power = entry.getValue();
             if (power > 0) {
-                writer.write(String.format(Locale.ROOT, "%d,%s,%.9f,%.9f,%.9f,%.4f%n", timestampMs,
+                // Seconds with their milliseconds, as PowerJoular writes its timestamps
+                writer.write(String.format(Locale.ROOT, "%.3f,%s,%.9f,%.9f,%.9f,%.4f%n", timestampMs / 1000.0,
                         csvEscape(entry.getKey()), power, power * intervalSeconds, intervalSeconds, coverage));
             }
         }

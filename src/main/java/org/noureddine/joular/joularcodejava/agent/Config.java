@@ -35,19 +35,23 @@ import java.util.logging.Logger;
  * @param vmPowerFile     the file the host writes this virtual machine's power to, or null when not set
  * @param vmPowerFormat   {@code powerjoular} or {@code watts}, the format of {@code vmPowerFile}
  * @param sampleRateMs    how often the stacks are sampled, in milliseconds
- * @param resultsDir      where the CSV files are written
+ * @param maxStackDepth   how many frames of each stack are kept, from the newest
+ * @param resultsDir      where the CSV files are written, in a folder per run
  * @param appPrefixes     what a frame must start with to be in the app file; empty means no filter
  * @param linesMonitoring whether branches are also measured by line, and written to the lines files
+ * @param aggregate       whether totals are written once, when the JVM stops, instead of a row per window
  */
 record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, String vmPowerFormat,
-        long sampleRateMs, Path resultsDir, List<String> appPrefixes, boolean linesMonitoring) {
+        long sampleRateMs, int maxStackDepth, Path resultsDir, List<String> appPrefixes, boolean linesMonitoring,
+        boolean aggregate) {
 
-    private static final Logger logger = Logger.getLogger(Config.class.getName());
+    private static final Logger logger = Agent.logger(Config.class);
 
     static final long DEFAULT_SAMPLE_RATE_MS = 10;
     private static final long LOW_SAMPLE_RATE_MS = 5;
     // Samples past a window's length would stretch the window itself
     private static final long MAX_SAMPLE_RATE_MS = 1000;
+    static final int DEFAULT_MAX_STACK_DEPTH = 64;
 
     /** @param agentArgument the agent's argument, the only way to name the file for a JVM already running */
     static Config load(String agentArgument) {
@@ -57,7 +61,9 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
 
         Properties properties = new Properties();
         if (!Files.isRegularFile(file)) {
-            logger.log(Level.INFO, "No configuration file at " + file.toAbsolutePath() + ", using defaults.");
+            // A file that was named is expected to be there, the default one is not
+            logger.log(configuredPath.isBlank() ? Level.INFO : Level.WARNING,
+                    "No configuration file at " + file.toAbsolutePath() + ", using defaults.");
         } else {
             try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 properties.load(reader);
@@ -76,14 +82,26 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
                 vmPowerFile.isEmpty() ? null : Path.of(vmPowerFile),
                 get(properties, "vm-power-format", "powerjoular").toLowerCase(Locale.ROOT),
                 sampleRate(get(properties, "stack-monitoring-sample-rate", "")),
+                stackDepth(get(properties, "max-stack-depth", "")),
                 Path.of(get(properties, "results-path", "joular-code-java-results")),
                 prefixes(get(properties, "methods-filtering-prefix", "")),
-                Boolean.parseBoolean(get(properties, "lines-monitoring", "false")));
+                flag(properties, "lines-monitoring", false),
+                flag(properties, "aggregate", false));
     }
 
     private static String get(Properties properties, String key, String defaultValue) {
         String value = properties.getProperty(key, "").trim();
         return value.isEmpty() ? defaultValue : value;
+    }
+
+    /** A boolean, where anything but true or false is reported and taken as the default. */
+    private static boolean flag(Properties properties, String key, boolean defaultValue) {
+        String value = get(properties, key, String.valueOf(defaultValue)).toLowerCase(Locale.ROOT);
+        if (value.equals("true") || value.equals("false")) {
+            return Boolean.parseBoolean(value);
+        }
+        logger.log(Level.WARNING, key + " must be true or false, not '" + value + "'. Using " + defaultValue + ".");
+        return defaultValue;
     }
 
     private static long sampleRate(String value) {
@@ -105,6 +123,23 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
         logger.log(Level.WARNING, "stack-monitoring-sample-rate must be a number of milliseconds from 1 to "
                 + MAX_SAMPLE_RATE_MS + ", not '" + value + "'. Using " + DEFAULT_SAMPLE_RATE_MS + " ms.");
         return DEFAULT_SAMPLE_RATE_MS;
+    }
+
+    private static int stackDepth(String value) {
+        if (value.isEmpty()) {
+            return DEFAULT_MAX_STACK_DEPTH;
+        }
+        try {
+            int depth = Integer.parseInt(value);
+            if (depth > 0) {
+                return depth;
+            }
+        } catch (NumberFormatException ignored) {
+            // Reported below, like a value out of range
+        }
+        logger.log(Level.WARNING, "max-stack-depth must be a positive number of frames, not '" + value + "'. Using "
+                + DEFAULT_MAX_STACK_DEPTH + ".");
+        return DEFAULT_MAX_STACK_DEPTH;
     }
 
     private static List<String> prefixes(String value) {

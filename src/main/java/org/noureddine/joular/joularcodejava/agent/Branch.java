@@ -65,6 +65,19 @@ final class Branch {
         return join(prefixes, true);
     }
 
+    /**
+     * The newest frame that starts with one of the prefixes (the newest of all without prefixes), with its line:
+     * the line that was running, or calling into code that is not the application's. Empty when no frame matches.
+     */
+    String selfLineName(List<String> prefixes) {
+        for (StackTraceElement frame : frames) {
+            if (prefixes.isEmpty() || matchesAny(frame, prefixes)) {
+                return frameText(frame);
+            }
+        }
+        return "";
+    }
+
     private String join(List<String> prefixes, boolean withLines) {
         StringBuilder name = new StringBuilder();
         for (int i = frames.length - 1; i >= 0; i--) {
@@ -76,14 +89,18 @@ final class Branch {
                 name.append(';');
             }
             if (withLines) {
-                // Without its module and class loader, the frame writes itself as a stack trace does
-                name.append(new StackTraceElement(frame.getClassName(), frame.getMethodName(), frame.getFileName(),
-                        frame.getLineNumber()));
+                name.append(frameText(frame));
             } else {
                 name.append(frame.getClassName()).append('.').append(frame.getMethodName());
             }
         }
         return name.toString();
+    }
+
+    /** Without its module and class loader, the frame writes itself as a stack trace does. */
+    private static String frameText(StackTraceElement frame) {
+        return new StackTraceElement(frame.getClassName(), frame.getMethodName(), frame.getFileName(),
+                frame.getLineNumber()).toString();
     }
 
     private static boolean matchesAny(StackTraceElement frame, List<String> prefixes) {

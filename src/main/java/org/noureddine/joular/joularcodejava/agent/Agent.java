@@ -28,15 +28,10 @@ import java.util.logging.Logger;
  */
 public final class Agent {
 
-    private static final Logger logger = Logger.getLogger(Agent.class.getName());
+    /** The last monitor started, or null. Set under the class lock, read by the shutdown hook. */
+    private static volatile Monitor activeMonitor;
 
-    // Held in a field because java.util.logging only keeps weak references, and would lose the handler with the logger
-    private static final Logger joularLogger = Logger.getLogger("org.noureddine.joular");
-
-    private static boolean loggingConfigured = false;
-
-    /** The last monitor started, or null. Guarded by the class lock, since the Attach API can load the agent again. */
-    private static Monitor activeMonitor;
+    private static boolean shutdownHookAdded = false;
 
     private Agent() {
     }
@@ -51,46 +46,65 @@ public final class Agent {
         start(args);
     }
 
+    /**
+     * The logger of one of the agent's classes.
+     * The first one asked for sets java.util.logging up for the agent, so it is not touched before the agent has something to say.
+     */
+    static Logger logger(Class<?> owner) {
+        return Logging.get(owner);
+    }
+
     private static synchronized void start(String args) {
         if (activeMonitor != null && activeMonitor.isAlive()) {
-            logger.log(Level.WARNING, "Joular Code for Java is already monitoring this JVM. Ignoring this attach.");
+            logger(Agent.class).log(Level.WARNING, "Joular Code for Java is already monitoring this JVM. Ignoring this attach.");
             return;
         }
         // Nothing may escape: an exception thrown out of premain stops the application from running at all
         try {
-            configureLogging();
             printBanner();
 
             Config config = Config.load(args);
             Monitor monitor = new Monitor(config, () -> PowerSource.open(config));
             monitor.start();
-            Runtime.getRuntime().addShutdownHook(new Thread(monitor::stop, "Joular-Agent-Shutdown"));
             activeMonitor = monitor;
-            logger.log(Level.INFO, "Joular Code for Java started. Results are written to " + config.resultsDir().toAbsolutePath());
+            if (!shutdownHookAdded) {
+                // One hook however often the agent is attached: it stops whichever monitor is running by then
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> activeMonitor.stop(), "Joular-Agent-Shutdown"));
+                shutdownHookAdded = true;
+            }
         } catch (Throwable t) {
-            logger.log(Level.SEVERE,
+            logger(Agent.class).log(Level.SEVERE,
                     "Joular Code for Java could not start. The application is unaffected and carries on without monitoring.", t);
         }
-    }
-
-    /** Sends the agent's own log records to stderr, without touching how the application logs. */
-    private static void configureLogging() {
-        if (loggingConfigured) {
-            return;
-        }
-        ConsoleHandler handler = new ConsoleHandler();
-        handler.setFormatter(new LogFormatter());
-        // Let everything through: the logger's level decides what is published
-        handler.setLevel(Level.ALL);
-        joularLogger.addHandler(handler);
-        joularLogger.setUseParentHandlers(false);
-        loggingConfigured = true;
     }
 
     private static void printBanner() {
         String version = Objects.requireNonNullElse(Agent.class.getPackage().getImplementationVersion(), "unknown");
         // stderr, like the logs: the application's stdout may be a data stream
         System.err.println("Joular Code for Java: version " + version);
+    }
+
+    /**
+     * Sends the agent's log records to stderr, without touching how the application logs.
+     * Loaded, and so set up, with the first logger asked for rather than in premain.
+     */
+    private static final class Logging {
+
+        // Held in a field because java.util.logging only keeps weak references, and would lose the handler with the logger
+        private static final Logger JOULAR = Logger.getLogger("org.noureddine.joular");
+
+        static {
+            ConsoleHandler handler = new ConsoleHandler();
+            handler.setFormatter(new LogFormatter());
+            // Let everything through: the logger's level decides what is published
+            handler.setLevel(Level.ALL);
+            JOULAR.addHandler(handler);
+            JOULAR.setUseParentHandlers(false);
+        }
+
+        static Logger get(Class<?> owner) {
+            return Logger.getLogger(owner.getName());
+        }
     }
 
     /** {@code dd-MM-yyyy HH:mm:ss LEVEL: message}, followed by the stack trace if there is one. */

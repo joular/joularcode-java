@@ -33,7 +33,7 @@ import java.util.logging.Logger;
  */
 final class LinuxRapl implements PowerSource {
 
-    private static final Logger logger = Logger.getLogger(LinuxRapl.class.getName());
+    private static final Logger logger = Agent.logger(LinuxRapl.class);
 
     private static final Path POWERCAP = Path.of("/sys/class/powercap");
 
@@ -128,6 +128,12 @@ final class LinuxRapl implements PowerSource {
         }
         lastReadNs = readNs;
         return (usedUj / 1e6) / (elapsedNs / 1e9);
+    }
+
+    /** The counters are read at the very end of a window, so even a window cut short is measured whole. */
+    @Override
+    public boolean measuresSincePreviousCall() {
+        return true;
     }
 
     @Override

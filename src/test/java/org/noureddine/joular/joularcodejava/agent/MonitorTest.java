@@ -107,7 +107,8 @@ class MonitorTest {
     }
 
     private Config config(List<String> appPrefixes, boolean lines) {
-        return new Config("auto", tempDir.resolve("ring"), null, "powerjoular", 10, tempDir, appPrefixes, lines);
+        return new Config("auto", tempDir.resolve("ring"), null, "powerjoular", 10, Config.DEFAULT_MAX_STACK_DEPTH,
+                tempDir, appPrefixes, lines, false);
     }
 
     private Monitor monitor(List<String> appPrefixes, boolean lines) throws IOException {
@@ -127,9 +128,14 @@ class MonitorTest {
         });
     }
 
+    /** The rows of a results file, none while the monitor thread has not created it yet. */
     private List<String> rows(String file) {
+        Path path = monitor.resultsDir().resolve(file);
+        if (!Files.exists(path)) {
+            return List.of();
+        }
         try {
-            return Files.readAllLines(tempDir.resolve(file)).stream().skip(1).toList();
+            return Files.readAllLines(path).stream().skip(1).toList();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -165,7 +171,7 @@ class MonitorTest {
 
         assertTrue(rows(ResultWriter.APP_METHODS_FILE).stream().anyMatch(row -> row.contains("MonitorTest.lambda$")));
         assertFalse(rows(ResultWriter.ALL_METHODS_FILE).isEmpty());
-        assertFalse(Files.exists(tempDir.resolve(ResultWriter.ALL_LINES_FILE)));
+        assertFalse(Files.exists(monitor.resultsDir().resolve(ResultWriter.ALL_LINES_FILE)));
     }
 
     @Test
@@ -196,7 +202,7 @@ class MonitorTest {
                 && record.getMessage().contains("the fake source is failing")).count());
     }
 
-    /** A source that cannot be opened ends monitoring with its reason, and nothing else. */
+    /** A source that cannot be opened ends monitoring with its reason, and nothing else: not even header-only files. */
     @Test
     void openFailure_isLoggedAndMonitoringEnds() throws Exception {
         monitor = new Monitor(config(List.of(), false), () -> {
@@ -208,5 +214,6 @@ class MonitorTest {
 
         assertTrue(logs.stream().anyMatch(record -> record.getLevel() == Level.SEVERE
                 && record.getMessage().contains("No power here.")));
+        assertFalse(Files.exists(monitor.resultsDir()));
     }
 }

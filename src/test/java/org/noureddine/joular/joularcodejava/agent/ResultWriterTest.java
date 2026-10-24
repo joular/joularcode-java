@@ -43,7 +43,7 @@ class ResultWriterTest {
     }
 
     private void writeAll(Map<String, Double> power, double intervalSeconds) throws IOException {
-        try (ResultWriter writer = new ResultWriter(tempDir, FILES)) {
+        try (ResultWriter writer = new ResultWriter(tempDir, FILES, false)) {
             writer.write(Map.of(ALL_METHODS_FILE, power), 1000L, intervalSeconds, 1.0);
         }
     }
@@ -55,7 +55,7 @@ class ResultWriterTest {
     @Test
     void open_createsTheDirectoryAndBothFilesWithAHeader() throws IOException {
         Path nested = tempDir.resolve("sub/nested");
-        new ResultWriter(nested, FILES).close();
+        new ResultWriter(nested, FILES, false).close();
 
         assertEquals(List.of(CSV_HEADER), Files.readAllLines(nested.resolve(ALL_METHODS_FILE)));
         assertEquals(List.of(CSV_HEADER), Files.readAllLines(nested.resolve(APP_METHODS_FILE)));
@@ -67,7 +67,7 @@ class ResultWriterTest {
         Path blockingFile = tempDir.resolve("blocked");
         Files.writeString(blockingFile, "not a directory");
 
-        assertThrows(IOException.class, () -> new ResultWriter(blockingFile, FILES));
+        assertThrows(IOException.class, () -> new ResultWriter(blockingFile, FILES, false));
     }
 
     /** A link planted where a results file goes must not make the agent, perhaps running as root, write through it. */
@@ -78,7 +78,7 @@ class ResultWriterTest {
         Files.writeString(target, "precious");
         Files.createSymbolicLink(tempDir.resolve(ALL_METHODS_FILE), target);
 
-        assertThrows(IOException.class, () -> new ResultWriter(tempDir, FILES));
+        assertThrows(IOException.class, () -> new ResultWriter(tempDir, FILES, false));
         assertEquals("precious", Files.readString(target));
     }
 
@@ -99,14 +99,14 @@ class ResultWriterTest {
 
     @Test
     void write_eachFileGetsItsOwnRows() throws IOException {
-        try (ResultWriter writer = new ResultWriter(tempDir, FILES)) {
+        try (ResultWriter writer = new ResultWriter(tempDir, FILES, false)) {
             writer.write(Map.of(ALL_METHODS_FILE, Map.of("java.lang.Thread.run;com.app.Main.run", 3.0),
                     APP_METHODS_FILE, Map.of("com.app.Main.run", 3.0)), 1746000000000L, 1.0, 0.75);
         }
 
-        assertEquals("1746000000000,java.lang.Thread.run;com.app.Main.run,3.000000000,3.000000000,1.000000000,0.7500",
+        assertEquals("1746000000.000,java.lang.Thread.run;com.app.Main.run,3.000000000,3.000000000,1.000000000,0.7500",
                 lines(ALL_METHODS_FILE).get(1));
-        assertEquals("1746000000000,com.app.Main.run,3.000000000,3.000000000,1.000000000,0.7500",
+        assertEquals("1746000000.000,com.app.Main.run,3.000000000,3.000000000,1.000000000,0.7500",
                 lines(APP_METHODS_FILE).get(1));
     }
 
@@ -141,7 +141,7 @@ class ResultWriterTest {
 
     @Test
     void close_isIdempotent() throws IOException {
-        ResultWriter writer = new ResultWriter(tempDir, FILES);
+        ResultWriter writer = new ResultWriter(tempDir, FILES, false);
         assertDoesNotThrow(() -> {
             writer.close();
             writer.close();
