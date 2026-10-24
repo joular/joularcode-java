@@ -17,7 +17,7 @@ import java.util.List;
  * A call branch: the stack of a thread, as the thread dump gives it (newest frame first).
  *
  * <p>Two stacks are the same branch when they go through the same methods, whatever the line numbers, unless lines are monitored: then they must also be on the same lines.
- * Comparing frames is cheap next to building text, so the stacks are counted as they are, on every sample, and only written out as text once per window.
+ * Comparing frames is cheap next to building text, so the stacks are kept as they are, on every sample, and only written out as text once per window.
  */
 final class Branch {
 
@@ -53,7 +53,7 @@ final class Branch {
     }
 
     /**
-     * Every branch, oldest first, with its line as a stack trace writes it:
+     * Every frame, oldest first, with its line as a stack trace writes it:
      * {@code a.Main.main(Main.java:5);a.Worker.compute(Worker.java:12)}.
      */
     String lineName() {

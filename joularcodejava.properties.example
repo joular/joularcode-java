@@ -11,7 +11,7 @@
 #
 # CPU power source
 # Options:
-#   auto (the first that opens: RAPL where there is one and it is readable, then the PowerJoular ring buffer, then the virtual machine file)
+#   auto (the virtual machine file when vm-power-file is set, else RAPL where there is one and it is readable, else the PowerJoular ring buffer)
 #   rapl (read Linux RAPL directly, from /sys/class/powercap)
 #   ringbuffer (read the shared memory ring buffer PowerJoular writes with -r)
 #   vm (inside a virtual machine, read the file the host writes the power of this virtual machine to, see vm-power-file)
@@ -26,7 +26,7 @@ power-source-type=
 #   Windows: %PROGRAMDATA%\powerjoular
 powerjoular-ringbuffer-path=
 
-# The path to the file where the host writes the power consumption of the guest virtual machine (if power-source-type is vm), as seen from the virtual machine
+# The path to the file where the host writes the power consumption of the guest virtual machine (used by vm, and by auto when set), as seen from the virtual machine
 # On the host, powerjoular -p <pid of the virtual machine's process> -o <file> writes it to <file>-<pid>.csv
 # Example: /mnt/shared/vm-power.csv-4242.csv
 vm-power-file=

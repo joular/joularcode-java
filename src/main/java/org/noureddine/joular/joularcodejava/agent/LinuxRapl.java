@@ -37,6 +37,9 @@ final class LinuxRapl implements PowerSource {
 
     private static final Path POWERCAP = Path.of("/sys/class/powercap");
 
+    /** No processor package draws this much, as in Joular Core. */
+    static final double MAX_PACKAGE_WATTS = 1000;
+
     /** One package's energy counter, in microjoules. */
     private static final class Zone {
         final Path energyFile;
@@ -120,14 +123,19 @@ final class LinuxRapl implements PowerSource {
             throw new IOException("RAPL was read twice at the same instant.");
         }
 
-        long usedUj = 0;
+        double seconds = elapsedNs / 1e9;
+        double joules = 0;
         for (int i = 0; i < energyUj.length; i++) {
             Zone zone = zones.get(i);
-            usedUj += energyBetween(zone.lastEnergyUj, energyUj[i], zone.maxEnergyUj);
+            double zoneJoules = energyBetween(zone.lastEnergyUj, energyUj[i], zone.maxEnergyUj) / 1e6;
+            // More than a package can draw: the counter was reset (suspend, driver reload), and counts on from here
+            if (zoneJoules / seconds <= MAX_PACKAGE_WATTS) {
+                joules += zoneJoules;
+            }
             zone.lastEnergyUj = energyUj[i];
         }
         lastReadNs = readNs;
-        return (usedUj / 1e6) / (elapsedNs / 1e9);
+        return joules / seconds;
     }
 
     /** The counters are read at the very end of a window, so even a window cut short is measured whole. */
@@ -142,12 +150,7 @@ final class LinuxRapl implements PowerSource {
 
     /** The energy used between two readings of a counter that wraps back to 0 past {@code maxUj}. */
     static long energyBetween(long beforeUj, long afterUj, long maxUj) {
-        if (afterUj >= beforeUj) {
-            return afterUj - beforeUj;
-        }
-        long wrapped = maxUj - beforeUj + afterUj;
-        // More than half the range in one window is not a wrap: the counter was reset, e.g. after suspend
-        return wrapped > maxUj / 2 ? 0 : wrapped;
+        return afterUj >= beforeUj ? afterUj - beforeUj : maxUj - beforeUj + afterUj;
     }
 
     private static long readEnergy(Zone zone) throws IOException {

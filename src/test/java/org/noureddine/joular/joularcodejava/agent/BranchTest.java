@@ -48,7 +48,7 @@ class BranchTest {
         assertEquals("com.example.Main.main", branch("com.example.Main.main").name());
     }
 
-    /** Samples on different lines of the same methods are one branch, so their counts add up. */
+    /** Samples on different lines of the same methods are one branch, so their CPU time adds up. */
     @Test
     void equals_ignoresLineNumbers() {
         StackTraceElement[] onLine10 = {new StackTraceElement("a.Worker", "compute", "Worker.java", 10)};

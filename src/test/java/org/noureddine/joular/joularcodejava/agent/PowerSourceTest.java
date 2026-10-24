@@ -55,6 +55,14 @@ class PowerSourceTest {
         }
     }
 
+    /** A virtual machine has no RAPL, and the ring buffer would open anyway, so a vm-power-file that is set wins. */
+    @Test
+    void auto_withVmPowerFile_opensTheVmFile() throws IOException {
+        try (PowerSource source = PowerSource.open(config("auto", tempDir.resolve("vm.csv"), "powerjoular"))) {
+            assertInstanceOf(VmPowerFile.class, source);
+        }
+    }
+
     @Test
     void ringbuffer_opensEvenWithoutPowerJoular() throws IOException {
         try (PowerSource source = PowerSource.open(config("ringbuffer"))) {

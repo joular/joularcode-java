@@ -20,22 +20,23 @@ import java.util.function.Function;
  *
  * <pre>
  *   processPower   = cpuPower x processShare
- *   threadPower(t) = processPower x cpuTime(t) / totalCpuTime
- *   branchPower(b) = threadPower(t) x samples(t, b) / samples(t)
+ *   branchPower(b) = processPower x cpuTime(b) / totalCpuTime
  * </pre>
  *
- * <p>Threads are weighted by CPU time rather than by sample count, so a thread blocked in native I/O (which Java
- * still reports as {@code RUNNABLE}) is not charged for waiting.
+ * <p>{@code cpuTime(b)} is the CPU time threads used on branch {@code b}: at each sample, what a running thread used
+ * since its previous sample goes to the branch it is caught on, and what it used after its last sample goes to the
+ * branch that sample caught. A thread blocked in native I/O, which Java still reports as {@code RUNNABLE}, uses no
+ * CPU, so the branch it waits on is not charged for waiting.
  *
  * <p>{@code totalCpuTime} includes threads that were never sampled. Their share is left unattributed rather than
- * spread over the threads that were seen; {@link CpuUsage#coverage()} says how much that is.
+ * spread over the threads that were seen; {@link #coverage} says how much that is.
  *
  * <p>The JVM's native threads (GC, JIT) are in {@code processPower} but in no Java thread's CPU time, so their
  * share is spread over the Java threads in proportion to theirs.
  *
  * <p>A sampled thread that ends inside a window is charged up to the sample that last saw it, since the JVM stops
- * reporting its CPU time once it has ended. Blind spots: threads that end without ever being sampled, virtual
- * threads (not in thread dumps), and whether a sampled thread was actually on a CPU at that instant.
+ * reporting its CPU time once it has ended. Blind spots: threads that end without ever being sampled, and virtual
+ * threads (not in thread dumps).
  */
 final class PowerModel {
 
@@ -65,82 +66,49 @@ final class PowerModel {
     }
 
     /**
-     * CPU time used over a window.
+     * The CPU time all of the JVM's threads used over a window, sampled or not, from snapshots keyed by thread id.
      *
-     * @param sampledThreadsNs CPU time of each thread that was sampled at least once
-     * @param totalNs          CPU time of all threads, sampled or not
-     * @param coverage         the sampled share of {@code totalNs}, from 0 to 1
+     * @param lastCpuNs per thread, its CPU time at its last sample, else at the start: where one that is gone from
+     *                  {@code end}, having ended inside the window, stops
      */
-    record CpuUsage(Map<Long, Long> sampledThreadsNs, long totalNs, double coverage) {
-    }
-
-    /**
-     * Compares two CPU-time snapshots, keyed by thread id.
-     *
-     * @param sampledLastNs per sampled thread, its CPU time when it was last sampled: where one that is gone from
-     *                      {@code end}, having ended inside the window, is charged up to
-     */
-    static CpuUsage cpuUsage(Map<Long, Long> sampledLastNs, Map<Long, Long> start, Map<Long, Long> end) {
-        // The live threads are read at the end; a sampled one missing there keeps its last reading
-        Map<Long, Long> endNs = new HashMap<>(sampledLastNs);
+    static long totalCpuNs(Map<Long, Long> lastCpuNs, Map<Long, Long> start, Map<Long, Long> end) {
+        // The live threads are read at the end; one missing there keeps its last reading
+        Map<Long, Long> endNs = new HashMap<>(lastCpuNs);
         endNs.putAll(end);
 
-        Map<Long, Long> sampledThreadsNs = new HashMap<>();
         long totalNs = 0;
-        long sampledNs = 0;
-
         for (Map.Entry<Long, Long> entry : endNs.entrySet()) {
-            long threadId = entry.getKey();
             // A thread missing from the start snapshot began inside the window (thread ids are never reused)
-            long usedNs = entry.getValue() - start.getOrDefault(threadId, 0L);
-            if (usedNs <= 0) {
-                continue;
-            }
-            totalNs += usedNs;
-            if (sampledLastNs.containsKey(threadId)) {
-                sampledNs += usedNs;
-                sampledThreadsNs.put(threadId, usedNs);
-            }
+            totalNs += Math.max(0, entry.getValue() - start.getOrDefault(entry.getKey(), 0L));
         }
-
-        double coverage = totalNs > 0 ? (double) sampledNs / totalNs : 0.0;
-        return new CpuUsage(sampledThreadsNs, totalNs, coverage);
+        return totalNs;
     }
 
-    /** Each sampled thread's share of the process power, in watts. */
-    static Map<Long, Double> threadPower(CpuUsage usage, double processPower) {
-        Map<Long, Double> threadPower = new HashMap<>();
-        if (processPower <= 0 || usage.totalNs() <= 0) {
-            return threadPower;
-        }
-        usage.sampledThreadsNs().forEach((threadId, usedNs) ->
-                threadPower.put(threadId, processPower * usedNs / usage.totalNs()));
-        return threadPower;
+    /** The share of {@code totalNs} charged to a branch, from 0 to 1. */
+    static double coverage(Map<Branch, Long> cpuNs, long totalNs) {
+        long chargedNs = cpuNs.values().stream().mapToLong(Long::longValue).sum();
+        return totalNs > 0 ? (double) chargedNs / totalNs : 0.0;
     }
 
     /**
-     * Spreads each thread's power over the branches seen on it, in proportion to how often each was seen.
+     * Splits the process power between the branches, in proportion to the CPU time charged to each.
      *
-     * @param samples     per thread, how many times each branch was seen
-     * @param threadPower per thread, its power in watts
-     * @param naming      the name a branch is reported under; an empty name leaves its share unattributed
-     * @return the power of each branch name, summed over threads
+     * @param cpuNs   the CPU time charged to each branch
+     * @param totalNs the CPU time of all of the JVM's threads
+     * @param naming  the name a branch is reported under; an empty name leaves its share unattributed
+     * @return the power of each branch name, in watts
      */
-    static Map<String, Double> branchPower(Map<Long, Map<Branch, Integer>> samples, Map<Long, Double> threadPower,
+    static Map<String, Double> branchPower(Map<Branch, Long> cpuNs, long totalNs, double processPower,
             Function<Branch, String> naming) {
         Map<String, Double> branchPower = new HashMap<>();
-        samples.forEach((threadId, branches) -> {
-            Double power = threadPower.get(threadId);
-            if (power == null) {
-                return;
+        if (processPower <= 0 || totalNs <= 0) {
+            return branchPower;
+        }
+        cpuNs.forEach((branch, usedNs) -> {
+            String name = naming.apply(branch);
+            if (!name.isEmpty()) {
+                branchPower.merge(name, processPower * usedNs / totalNs, Double::sum);
             }
-            int threadSamples = branches.values().stream().mapToInt(Integer::intValue).sum();
-            branches.forEach((branch, count) -> {
-                String name = naming.apply(branch);
-                if (!name.isEmpty()) {
-                    branchPower.merge(name, power * count / threadSamples, Double::sum);
-                }
-            });
         });
         return branchPower;
     }

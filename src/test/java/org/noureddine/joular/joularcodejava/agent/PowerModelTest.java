@@ -19,7 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.noureddine.joular.joularcodejava.agent.PowerModel.CpuUsage;
+import org.noureddine.joular.joularcodejava.agent.ThreadSampler.Samples;
 
 class PowerModelTest {
 
@@ -57,26 +57,37 @@ class PowerModelTest {
     }
 
     // -------------------------------------------------------------------------
-    // cpuUsage: which CPU time goes in the denominator, and what coverage says
+    // totalCpuNs and coverage: which CPU time goes in the denominator, and how much of it was charged to a branch
     // -------------------------------------------------------------------------
 
     /** A thread that used CPU without being sampled still counts in the total, so the sampled ones are not overpaid. */
     @Test
-    void cpuUsage_unsampledThreadStaysInTheTotal() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 300L, 2L, 700L));
+    void totalCpuNs_unsampledThreadStaysInTheTotal() {
+        Map<Long, Long> start = Map.of(1L, 0L, 2L, 0L);
+        Map<Long, Long> end = Map.of(1L, 300L, 2L, 700L);
+        Samples samples = new Samples(start);
+        samples.charge(1L, branch("a.A.a"), 200L);
+        samples.end(end);
 
-        assertEquals(1000L, usage.totalNs(), "both threads' CPU time counts");
-        assertEquals(Map.of(1L, 300L), usage.sampledThreadsNs(), "only the sampled one is paid");
-        assertEquals(0.3, usage.coverage(), 1e-9);
+        long totalNs = PowerModel.totalCpuNs(samples.lastCpuNs, start, end);
+
+        assertEquals(1000L, totalNs, "both threads' CPU time counts");
+        assertEquals(Map.of(branch("a.A.a"), 300L), samples.cpuNs, "only the sampled one is charged");
+        assertEquals(0.3, PowerModel.coverage(samples.cpuNs, totalNs), 1e-9);
     }
 
     /** A thread missing from the start snapshot began inside the window, so all its CPU time was spent there. */
     @Test
-    void cpuUsage_threadStartedMidWindow_countsAllOfItsCpuTime() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(7L, 0L), Map.of(), Map.of(7L, 500L));
+    void totalCpuNs_threadStartedMidWindow_countsAllOfItsCpuTime() {
+        Map<Long, Long> end = Map.of(7L, 500L);
+        Samples samples = new Samples(Map.of());
+        samples.charge(7L, branch("a.A.a"), 200L);
+        samples.end(end);
 
-        assertEquals(500L, usage.totalNs());
-        assertEquals(1.0, usage.coverage(), 1e-9);
+        long totalNs = PowerModel.totalCpuNs(samples.lastCpuNs, Map.of(), end);
+
+        assertEquals(500L, totalNs);
+        assertEquals(1.0, PowerModel.coverage(samples.cpuNs, totalNs), 1e-9);
     }
 
     /**
@@ -84,61 +95,39 @@ class PowerModelTest {
      * It keeps what it used up to its last sample, instead of handing it to the threads still alive.
      */
     @Test
-    void cpuUsage_sampledThreadEndedMidWindow_keepsItsLastSeenCpuTime() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 400L, 2L, 600L), Map.of(1L, 100L, 2L, 100L), Map.of(1L, 500L));
+    void totalCpuNs_sampledThreadEndedMidWindow_keepsItsLastSeenCpuTime() {
+        Map<Long, Long> start = Map.of(1L, 100L, 2L, 100L);
+        Map<Long, Long> end = Map.of(2L, 600L);
+        Samples samples = new Samples(start);
+        samples.charge(1L, branch("a.A.a"), 400L);
+        samples.charge(2L, branch("b.B.b"), 300L);
+        samples.end(end);
 
-        assertEquals(Map.of(1L, 400L, 2L, 500L), usage.sampledThreadsNs(), "the live one is read at the end");
-        assertEquals(900L, usage.totalNs());
-        assertEquals(1.0, usage.coverage(), 1e-9);
+        long totalNs = PowerModel.totalCpuNs(samples.lastCpuNs, start, end);
+
+        assertEquals(Map.of(branch("a.A.a"), 300L, branch("b.B.b"), 500L), samples.cpuNs, "the live one runs to the end");
+        assertEquals(800L, totalNs);
+        assertEquals(1.0, PowerModel.coverage(samples.cpuNs, totalNs), 1e-9);
     }
 
     @Test
-    void cpuUsage_idleThreadIgnored() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 100L, 2L, 900L), Map.of(1L, 600L, 2L, 900L));
+    void totalCpuNs_idleThreadIgnored() {
+        Map<Long, Long> start = Map.of(1L, 100L, 2L, 900L);
+        Map<Long, Long> end = Map.of(1L, 600L, 2L, 900L);
+        Samples samples = new Samples(start);
+        samples.charge(1L, branch("a.A.a"), 600L);
+        samples.end(end);
 
-        assertEquals(500L, usage.totalNs());
-        assertEquals(1.0, usage.coverage(), 1e-9, "the idle thread is not missing coverage");
+        long totalNs = PowerModel.totalCpuNs(samples.lastCpuNs, start, end);
+
+        assertEquals(500L, totalNs);
+        assertEquals(1.0, PowerModel.coverage(samples.cpuNs, totalNs), 1e-9, "the idle thread is not missing coverage");
     }
 
     @Test
-    void cpuUsage_noCpuUsed_coverageIsZero() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 100L), Map.of(1L, 100L), Map.of(1L, 100L));
-
-        assertEquals(0L, usage.totalNs());
-        assertEquals(0.0, usage.coverage(), 1e-9);
-        assertTrue(usage.sampledThreadsNs().isEmpty());
-    }
-
-    // -------------------------------------------------------------------------
-    // threadPower
-    // -------------------------------------------------------------------------
-
-    @Test
-    void threadPower_splitsByCpuTime() {
-        Map<Long, Double> power = PowerModel.threadPower(new CpuUsage(Map.of(1L, 25L, 2L, 75L), 100L, 1.0), 40.0);
-
-        assertEquals(10.0, power.get(1L), 1e-9);
-        assertEquals(30.0, power.get(2L), 1e-9);
-    }
-
-    /**
-     * What is handed out is less than the JVM drew, by exactly the share never observed. Normalising over the
-     * sampled threads instead would balance the totals by inflating the methods that happened to be seen.
-     */
-    @Test
-    void threadPower_unobservedShareIsLeftUnattributed() {
-        CpuUsage usage = PowerModel.cpuUsage(Map.of(1L, 0L), Map.of(1L, 0L, 2L, 0L), Map.of(1L, 250L, 2L, 750L));
-
-        Map<Long, Double> power = PowerModel.threadPower(usage, 80.0);
-
-        assertEquals(20.0, power.get(1L), 1e-9);
-        assertEquals(usage.coverage() * 80.0, power.values().stream().mapToDouble(Double::doubleValue).sum(), 1e-9);
-    }
-
-    @Test
-    void threadPower_noPowerOrNoCpu_isEmpty() {
-        assertTrue(PowerModel.threadPower(new CpuUsage(Map.of(), 0L, 0.0), 80.0).isEmpty());
-        assertTrue(PowerModel.threadPower(new CpuUsage(Map.of(1L, 10L), 10L, 1.0), 0.0).isEmpty());
+    void coverage_noCpuUsed_isZero() {
+        assertEquals(0L, PowerModel.totalCpuNs(Map.of(1L, 100L), Map.of(1L, 100L), Map.of(1L, 100L)));
+        assertEquals(0.0, PowerModel.coverage(Map.of(), 0L), 1e-9);
     }
 
     // -------------------------------------------------------------------------
@@ -146,35 +135,39 @@ class PowerModelTest {
     // -------------------------------------------------------------------------
 
     @Test
-    void branchPower_splitsEachThreadBySampleCount() {
+    void branchPower_splitsByCpuTime() {
         Map<String, Double> power = PowerModel.branchPower(
-                Map.of(1L, Map.of(branch("a.A.a"), 3, branch("b.B.b"), 1)), Map.of(1L, 8.0), Branch::name);
+                Map.of(branch("a.A.a"), 25L, branch("b.B.b"), 75L), 100L, 40.0, Branch::name);
 
-        assertEquals(6.0, power.get("a.A.a"), 1e-9);
-        assertEquals(2.0, power.get("b.B.b"), 1e-9);
+        assertEquals(Map.of("a.A.a", 10.0, "b.B.b", 30.0), power);
     }
 
+    /**
+     * What is handed out is less than the JVM drew, by exactly the share never observed. Normalising over the
+     * charged CPU time instead would balance the totals by inflating the methods that happened to be seen.
+     */
     @Test
-    void branchPower_sameBranchOnTwoThreads_isSummed() {
-        Map<String, Double> power = PowerModel.branchPower(
-                Map.of(1L, Map.of(branch("a.A.a"), 1), 2L, Map.of(branch("a.A.a"), 1)),
-                Map.of(1L, 2.0, 2L, 3.0), Branch::name);
+    void branchPower_unobservedShareIsLeftUnattributed() {
+        Map<Branch, Long> cpuNs = Map.of(branch("a.A.a"), 250L);
 
-        assertEquals(5.0, power.get("a.A.a"), 1e-9);
+        Map<String, Double> power = PowerModel.branchPower(cpuNs, 1000L, 80.0, Branch::name);
+
+        assertEquals(20.0, power.get("a.A.a"), 1e-9);
+        assertEquals(PowerModel.coverage(cpuNs, 1000L) * 80.0, power.get("a.A.a"), 1e-9);
     }
 
-    /** Samples that matched no app frame still count for the thread, so their share is not given to the app branches. */
+    /** CPU time charged to branches with no app frame still counts in the total, so it is not given to the app branches. */
     @Test
-    void branchPower_unmatchedSamplesStayInTheThreadTotal() {
+    void branchPower_unmatchedBranchesStayInTheTotal() {
         List<String> prefixes = List.of("com.app");
         Map<String, Double> power = PowerModel.branchPower(
-                Map.of(1L, Map.of(branch("com.app.Main.run"), 1, branch("java.lang.Thread.run"), 3)),
-                Map.of(1L, 8.0), branch -> branch.appName(prefixes));
+                Map.of(branch("com.app.Main.run"), 1L, branch("java.lang.Thread.run"), 3L), 4L, 8.0,
+                branch -> branch.appName(prefixes));
 
         assertEquals(Map.of("com.app.Main.run", 2.0), power);
     }
 
-    /** Telling lines apart splits the counts, but branchPower merges them back by name, so the methods files stay the same. */
+    /** Telling lines apart splits the CPU time, but branchPower merges it back by name, so the methods files stay the same. */
     @Test
     void branchPower_linesMonitored_methodPowerUnchanged() {
         StackTraceElement main = new StackTraceElement("a.Main", "main", "Main.java", 5);
@@ -183,27 +176,27 @@ class PowerModelTest {
                 new StackTraceElement[] {new StackTraceElement("a.Worker", "compute", "Worker.java", 10), main},
                 new StackTraceElement[] {new StackTraceElement("a.Worker", "compute", "Worker.java", 20), main},
                 new StackTraceElement[] {new StackTraceElement("a.Worker", "save", "Worker.java", 30), main});
-        Map<Branch, Integer> byMethod = new HashMap<>();
-        Map<Branch, Integer> byLine = new HashMap<>();
+        Map<Branch, Long> byMethod = new HashMap<>();
+        Map<Branch, Long> byLine = new HashMap<>();
         for (StackTraceElement[] stack : stacks) {
-            byMethod.merge(Branch.of(stack, false), 1, Integer::sum);
-            byLine.merge(Branch.of(stack, true), 1, Integer::sum);
+            byMethod.merge(Branch.of(stack, false), 1L, Long::sum);
+            byLine.merge(Branch.of(stack, true), 1L, Long::sum);
         }
-        Map<Long, Double> threadPower = Map.of(1L, 8.0);
         List<String> prefixes = List.of("a.Worker");
 
-        assertEquals(PowerModel.branchPower(Map.of(1L, byMethod), threadPower, Branch::name),
-                PowerModel.branchPower(Map.of(1L, byLine), threadPower, Branch::name));
-        assertEquals(PowerModel.branchPower(Map.of(1L, byMethod), threadPower, branch -> branch.appName(prefixes)),
-                PowerModel.branchPower(Map.of(1L, byLine), threadPower, branch -> branch.appName(prefixes)));
+        assertEquals(PowerModel.branchPower(byMethod, 4L, 8.0, Branch::name),
+                PowerModel.branchPower(byLine, 4L, 8.0, Branch::name));
+        assertEquals(PowerModel.branchPower(byMethod, 4L, 8.0, branch -> branch.appName(prefixes)),
+                PowerModel.branchPower(byLine, 4L, 8.0, branch -> branch.appName(prefixes)));
         assertEquals(Map.of("a.Main.main(Main.java:5);a.Worker.compute(Worker.java:10)", 4.0,
                         "a.Main.main(Main.java:5);a.Worker.compute(Worker.java:20)", 2.0,
                         "a.Main.main(Main.java:5);a.Worker.save(Worker.java:30)", 2.0),
-                PowerModel.branchPower(Map.of(1L, byLine), threadPower, Branch::lineName));
+                PowerModel.branchPower(byLine, 4L, 8.0, Branch::lineName));
     }
 
     @Test
-    void branchPower_threadWithoutPower_isSkipped() {
-        assertTrue(PowerModel.branchPower(Map.of(1L, Map.of(branch("a.A.a"), 1)), Map.of(), Branch::name).isEmpty());
+    void branchPower_noPowerOrNoCpu_isEmpty() {
+        assertTrue(PowerModel.branchPower(Map.of(branch("a.A.a"), 10L), 0L, 80.0, Branch::name).isEmpty());
+        assertTrue(PowerModel.branchPower(Map.of(branch("a.A.a"), 10L), 10L, 0.0, Branch::name).isEmpty());
     }
 }

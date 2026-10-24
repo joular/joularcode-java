@@ -30,11 +30,11 @@ Detailed documentation (including user and reference guides) is available at: [h
 
 Joular Code for Java runs as a Java agent alongside your application. Every monitoring cycle (about 1 second), it:
 
-1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, counting how often each call branch is seen.
+1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, and charges the CPU time the thread used since its previous sample to the call branch it is on.
 2. **Measures CPU time**: at the start and end of each cycle, it reads the CPU time of each thread and of the whole JVM.
 3. **Reads the CPU power** of the machine over the cycle, from RAPL, PowerJoular, or the host of a virtual machine.
 4. **Scales to process power**: the JVM's share of the CPU power is its own CPU load over the machine's: `cpuPower * processLoad / systemLoad`. On Linux, the machine's load and its number of CPUs are read from `/proc/stat` over the cycle, so inside a container the share is of the host's CPUs, not of the few the cgroup lets the JVM see.
-5. **Attributes energy to methods and execution branches**: each thread receives a fraction of process power proportional to its CPU time. Within each thread, power is further distributed to execution call branches proportionally to their sample counts.
+5. **Attributes energy to methods and execution branches**: each call branch receives a fraction of process power proportional to the CPU time charged to it, over the CPU time of all of the JVM's threads. A thread blocked in native I/O, which Java still reports as `RUNNABLE`, uses no CPU, so the branch it waits on is not charged for waiting.
 6. **Writes results** to CSV files: both power (W) and energy (J = W × interval) are recorded per branch per cycle.
 
 ## :package: Compilation and Installation
@@ -130,7 +130,7 @@ A missing file, or a property left empty, means the default value will be used; 
 
 ### Power sources
 
-With `power-source-type=auto`, the default, the agent takes the first source it can open: RAPL where there is one (Linux, with read access to it), then the PowerJoular ring buffer, then the virtual machine file. Each one it cannot open is reported with a warning, so on a Linux machine where RAPL is only readable by root, PowerJoular's ring buffer is read instead of monitoring ending. The ring buffer opens even before PowerJoular runs, so in a virtual machine, set `vm` explicitly. On Linux, `ringbuffer` keeps the application unprivileged: run `sudo powerjoular -r` and set it explicitly.
+With `power-source-type=auto`, the default, the agent reads the virtual machine file when `vm-power-file` is set, else RAPL where there is one (Linux, with read access to it), else the PowerJoular ring buffer. On a Linux machine where RAPL is only readable by root, this is reported with a warning and PowerJoular's ring buffer is read instead of monitoring ending. On Linux, `ringbuffer` keeps the application unprivileged: run `sudo powerjoular -r` and set it explicitly.
 
 #### Linux RAPL (`rapl`)
 
@@ -200,7 +200,7 @@ When setting `lines-monitoring=true`, energy is also measured by line of code, a
 1746000000.000,com.example.Main.main(Main.java:12);com.example.Service.process(Service.java:120),2.341500000,2.341500000,1.000000000,1.0000
 ```
 
-The line of the newest branch is the line being executed, and the line of every other branch is the line calling the next branch. The methods files stay the same.
+The line of the newest frame is the line being executed, and the line of every other frame is the line calling the next frame. The methods files stay the same.
 
 A third file, `lines-power-app-self.csv`, has one row per line of the application per cycle, whatever it was called from: the newest frame of each branch that matches `methods-filtering-prefix` (the newest of all without a filter), so the line that was running, or that called into the JDK. It is the total of a line itself, where the two other files split it by call branch.
 

@@ -33,7 +33,7 @@ import java.util.logging.Logger;
  *   <li>{@code watts}: the power alone, in watts, written by anything. It is used as it is, however old.</li>
  * </ul>
  *
- * <p>The host writes automatically one-second cycle, which windows cannot follow through a shared folder, so a window may see the row the previous one saw, or catch the file while it is rewritten.
+ * <p>The host writes on a one-second cycle of its own, which windows cannot follow through a shared folder, so a window may see the row the previous one saw, or catch the file while it is rewritten.
  * A value keeps covering for up to {@link #MAX_REUSES} more windows; after that, the host is taken to have stopped.
  * A row's own timestamp tells, so the clocks of the host and the guest are never compared; a bare power has none, so only a read that fails counts against it.
  */
@@ -76,43 +76,30 @@ final class VmPowerFile implements PowerSource {
 
     @Override
     public double watts() throws IOException {
-        IOException problem;
         try {
-            if (!powerJoularFormat) {
-                lastPower = parsePower(firstLine(false));
-                reuses = 0;
-                return lastPower;
-            }
-            Row row = readRow();
-            if (row.timestamp() != lastTimestamp) {
-                lastTimestamp = row.timestamp();
-                lastPower = row.power();
-                reuses = 0;
-                return lastPower;
-            }
-            problem = new IOException("The host has not updated " + file + " for " + (MAX_REUSES + 1)
-                    + " windows. Is PowerJoular still running on the host?");
+            lastPower = readPower();
+            reuses = 0;
+            return lastPower;
         } catch (IOException e) {
-            problem = e;
+            // The last value covers a window that could not get a new one, for a little while
+            if (lastPower < 0 || reuses == MAX_REUSES) {
+                throw e;
+            }
+            reuses++;
+            return lastPower;
         }
-
-        // The last value covers a window that could not get a new one, for a little while
-        if (lastPower < 0 || reuses == MAX_REUSES) {
-            throw problem;
-        }
-        reuses++;
-        return lastPower;
     }
 
     @Override
     public void close() {
     }
 
-    /** One row of the file PowerJoular writes for a process: the host's Unix time, and the power in watts. */
-    private record Row(long timestamp, double power) {
-    }
-
-    private Row readRow() throws IOException {
+    /** A new power from the file, or an exception when it cannot be read or the host has not rewritten it. */
+    private double readPower() throws IOException {
+        if (!powerJoularFormat) {
+            return parsePower(firstLine(false));
+        }
+        // The row PowerJoular writes for a process: the host's Unix time, the CPU usage, and the power in watts
         String[] columns = firstLine(true).split(",", -1);
         if (columns.length == 5) {
             throw new IOException(file + " holds the power of the whole host. Point vm-power-file at the file"
@@ -123,7 +110,14 @@ final class VmPowerFile implements PowerSource {
             throw new IOException(file + " does not hold the row PowerJoular writes with -o for a process"
                     + " (timestamp,cpu_usage,cpu_power).");
         }
-        return new Row(parseTimestamp(columns[0]), parsePower(columns[2]));
+        long timestamp = parseTimestamp(columns[0]);
+        double power = parsePower(columns[2]);
+        if (timestamp == lastTimestamp) {
+            throw new IOException("The host has not updated " + file + " for " + (MAX_REUSES + 1)
+                    + " windows. Is PowerJoular still running on the host?");
+        }
+        lastTimestamp = timestamp;
+        return power;
     }
 
     /**

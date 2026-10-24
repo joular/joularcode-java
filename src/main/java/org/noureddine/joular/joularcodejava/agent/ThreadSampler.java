@@ -38,19 +38,55 @@ final class ThreadSampler {
 
     /** What was seen during one window. */
     static final class Samples {
-        /** Per thread, how many times it was caught on each branch. */
-        final Map<Long, Map<Branch, Integer>> branches = new HashMap<>();
-        /** Per sampled thread, its CPU time when it was last sampled, which is all that is left of one that ends. */
-        final Map<Long, Long> lastCpuNs = new HashMap<>();
+        /** The CPU time charged to each branch, over all threads. */
+        final Map<Branch, Long> cpuNs = new HashMap<>();
+        /** Per thread, its CPU time at its last sample, else at the window's start: all that is left of one that ends. */
+        final Map<Long, Long> lastCpuNs;
+        /** Per sampled thread, the branch its last sample caught it on. */
+        private final Map<Long, Branch> lastBranch = new HashMap<>();
         int taken = 0;
         int missed = 0;
+
+        /** @param startCpuNs the CPU time of each thread as the window starts */
+        Samples(Map<Long, Long> startCpuNs) {
+            lastCpuNs = new HashMap<>(startCpuNs);
+        }
+
+        /**
+         * Charges the CPU time a thread used since its last reading to the branch it is caught on now.
+         * A thread blocked in native code is RUNNABLE too, but uses no CPU, so the branch it waits on gets nothing.
+         */
+        void charge(long threadId, Branch branch, long threadCpuNs) {
+            // A thread missing from the start began inside the window, so all its CPU time was spent there
+            add(branch, threadCpuNs - lastCpuNs.getOrDefault(threadId, 0L));
+            lastCpuNs.put(threadId, threadCpuNs);
+            lastBranch.put(threadId, branch);
+        }
+
+        /** Called once, as the window ends: what each sampled thread used after its last sample goes to that sample's branch. */
+        void end(Map<Long, Long> endCpuNs) {
+            for (Map.Entry<Long, Branch> last : lastBranch.entrySet()) {
+                Long threadCpuNs = endCpuNs.get(last.getKey());
+                // A thread gone by then ended inside the window, and stays charged up to its last sample
+                if (threadCpuNs != null) {
+                    add(last.getValue(), threadCpuNs - lastCpuNs.get(last.getKey()));
+                }
+            }
+        }
+
+        private void add(Branch branch, long usedNs) {
+            if (usedNs > 0) {
+                cpuNs.merge(branch, usedNs, Long::sum);
+            }
+        }
     }
 
-    /** Records the branch each running thread is on, and its CPU time so far. */
+    /** Charges each running thread's CPU time since its last reading to the branch it is on. */
     void sample(Samples samples) {
         samples.taken++;
         ThreadInfo[] infos = threadBean.dumpAllThreads(false, false, maxDepth);
         long[] ids = new long[infos.length];
+        Branch[] branches = new Branch[infos.length];
         int running = 0;
         for (ThreadInfo info : infos) {
             if (info == null || info.getThreadId() == ownThreadId || info.getThreadState() != Thread.State.RUNNABLE) {
@@ -58,16 +94,16 @@ final class ThreadSampler {
             }
             StackTraceElement[] stack = info.getStackTrace();
             if (stack.length > 0) {
-                samples.branches.computeIfAbsent(info.getThreadId(), id -> new HashMap<>())
-                        .merge(Branch.of(stack, lines), 1, Integer::sum);
-                ids[running++] = info.getThreadId();
+                ids[running] = info.getThreadId();
+                branches[running++] = Branch.of(stack, lines);
             }
         }
         // Read now rather than at the window's end, which a thread may not live to see
         long[] times = threadBean.getThreadCpuTime(Arrays.copyOf(ids, running));
         for (int i = 0; i < running; i++) {
+            // -1 means the thread ended since the dump
             if (times[i] >= 0) {
-                samples.lastCpuNs.put(ids[i], times[i]);
+                samples.charge(ids[i], branches[i], times[i]);
             }
         }
     }

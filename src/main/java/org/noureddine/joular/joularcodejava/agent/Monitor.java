@@ -26,7 +26,6 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.noureddine.joular.joularcodejava.agent.PowerModel.CpuUsage;
 import org.noureddine.joular.joularcodejava.agent.ThreadSampler.Samples;
 
 /**
@@ -201,6 +200,8 @@ final class Monitor {
             } catch (RuntimeException e) {
                 logger.log(windowErrorLogged ? Level.FINE : Level.SEVERE, "Error in a monitoring window, continuing.", e);
                 windowErrorLogged = true;
+                // So an error that comes back at once does not spin a CPU; stop() still ends the wait
+                LockSupport.parkNanos(PowerSource.ONE_SECOND_NS);
                 windowStart = snapshot();
             }
         }
@@ -208,7 +209,7 @@ final class Monitor {
 
     /** Runs one window and returns the snapshot it ended on, which the next window starts from. */
     private CpuSnapshot runWindow(PowerSource powerSource, CpuSnapshot start) {
-        Samples samples = sampleWindow(powerSource, start.nanoTime());
+        Samples samples = sampleWindow(powerSource, start);
         if (!running && !powerSource.measuresSincePreviousCall()) {
             // Cut short by shutdown: the power of a fraction of a window is only known to a source that measures up to now
             return start;
@@ -225,12 +226,12 @@ final class Monitor {
     }
 
     /** Samples the stacks at the configured rate until the power source ends the window. */
-    private Samples sampleWindow(PowerSource powerSource, long windowStartNs) {
-        Samples samples = new Samples();
+    private Samples sampleWindow(PowerSource powerSource, CpuSnapshot start) {
+        Samples samples = new Samples(start.threadCpuNs());
 
         // Samples are due at fixed times, so the time a thread dump takes does not stretch the interval
         long nextSampleNs = System.nanoTime();
-        while (running && !powerSource.windowOver(System.nanoTime() - windowStartNs)) {
+        while (running && !powerSource.windowOver(System.nanoTime() - start.nanoTime())) {
             sampler.sample(samples);
 
             nextSampleNs += sampleRateNs;
@@ -274,18 +275,19 @@ final class Monitor {
         double intervalSeconds = elapsedNs / 1e9;
         warnIfOverrunning(samples, intervalSeconds);
 
-        CpuUsage usage = PowerModel.cpuUsage(samples.lastCpuNs, start.threadCpuNs(), end.threadCpuNs());
-        warnIfLowCoverage(usage.coverage());
+        samples.end(end.threadCpuNs());
+        long totalNs = PowerModel.totalCpuNs(samples.lastCpuNs, start.threadCpuNs(), end.threadCpuNs());
+        double coverage = PowerModel.coverage(samples.cpuNs, totalNs);
+        warnIfLowCoverage(coverage);
 
-        double processShare = PowerModel.processShare(end.processCpuNs() - start.processCpuNs(), elapsedNs, cpus,
-                systemLoad);
-        Map<Long, Double> threadPower = PowerModel.threadPower(usage, cpuPower * processShare);
+        double processPower = cpuPower * PowerModel.processShare(end.processCpuNs() - start.processCpuNs(),
+                elapsedNs, cpus, systemLoad);
 
         Map<Function<Branch, String>, Map<String, Double>> powerByNaming = new IdentityHashMap<>();
         Map<String, Map<String, Double>> powerByFile = new LinkedHashMap<>();
         namings.forEach((file, naming) -> powerByFile.put(file, powerByNaming.computeIfAbsent(naming,
-                n -> PowerModel.branchPower(samples.branches, threadPower, n))));
-        results.write(powerByFile, System.currentTimeMillis(), intervalSeconds, usage.coverage());
+                n -> PowerModel.branchPower(samples.cpuNs, totalNs, processPower, n))));
+        results.write(powerByFile, System.currentTimeMillis(), intervalSeconds, coverage);
     }
 
     private void warnIfOverrunning(Samples samples, double intervalSeconds) {

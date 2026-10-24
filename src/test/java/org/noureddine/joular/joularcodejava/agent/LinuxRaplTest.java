@@ -29,7 +29,8 @@ import org.junit.jupiter.api.io.TempDir;
 class LinuxRaplTest {
 
     private static final long SECOND = 1_000_000_000L;
-    private static final long MAX_UJ = 10_000_000;
+    /** A real package's range, so that a reset implies far more than a package can draw. */
+    private static final long MAX_UJ = 262_143_328_850L;
 
     @TempDir
     Path powercap;
@@ -128,6 +129,21 @@ class LinuxRaplTest {
         assertEquals(2.0, rapl.watts(), 1e-9, "counting on from the reset value");
     }
 
+    /** A reset from past half the range looks like a wrap, but would mean kilowatts: only that package gets nothing. */
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void watts_counterResetFromHighUp_countsNothingForThatPackage() throws IOException {
+        zone("intel-rapl:0", "package-0", MAX_UJ / 4 * 3);
+        zone("intel-rapl:1", "package-1", 0);
+        LinuxRapl rapl = open();
+
+        energy("intel-rapl:0", "1000000");
+        energy("intel-rapl:1", "1000000");
+        now += SECOND;
+
+        assertEquals(1.0, rapl.watts(), 1e-9, "the other package still counts");
+    }
+
     @Test
     @DisabledOnOs(OS.WINDOWS)
     void open_noPackageZone_throws() throws IOException {
@@ -150,6 +166,5 @@ class LinuxRaplTest {
         assertEquals(300, LinuxRapl.energyBetween(100, 400, 1000));
         assertEquals(0, LinuxRapl.energyBetween(400, 400, 1000));
         assertEquals(150, LinuxRapl.energyBetween(900, 50, 1000), "wrapped past 1000");
-        assertEquals(0, LinuxRapl.energyBetween(100, 50, 1000), "a jump back over half the range is a reset");
     }
 }
