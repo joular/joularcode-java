@@ -159,7 +159,7 @@ powerjoular-ringbuffer-path=/dev/shm/powerjoular
 
 The CPU of a virtual machine cannot be measured from inside it, but its host can measure the process the virtual machine runs as. Run PowerJoular on the host for that process, share the file it writes with the virtual machine (virtiofs, 9p, a shared folder), and point the agent at it. Nothing else has to run in the virtual machine.
 
-On the host, `-p` with `-o` writes two files: `<file>` for the whole host, and `<file>-<pid>.csv` for the process, which is the one to share:
+On the host, `-p` with `-o` writes two files: `vm-power.csv` for the whole host, and `vm-power-<pid>.csv` for the process, which is the one to share:
 
 ```bash
 powerjoular -p <pid of the virtual machine's process> -o /shared/vm-power.csv
@@ -169,7 +169,7 @@ In the virtual machine:
 
 ```properties
 power-source-type=vm
-vm-power-file=/mnt/shared/vm-power.csv-<pid>.csv
+vm-power-file=/mnt/shared/vm-power-<pid>.csv
 vm-power-format=powerjoular
 ```
 

@@ -27,8 +27,8 @@ power-source-type=
 powerjoular-ringbuffer-path=
 
 # The path to the file where the host writes the power consumption of the guest virtual machine (used by vm, and by auto when set), as seen from the virtual machine
-# On the host, powerjoular -p <pid of the virtual machine's process> -o <file> writes it to <file>-<pid>.csv
-# Example: /mnt/shared/vm-power.csv-4242.csv
+# On the host, powerjoular -p <pid of the virtual machine's process> -o vm-power.csv writes it to vm-power-<pid>.csv
+# Example: /mnt/shared/vm-power-4242.csv
 vm-power-file=
 
 # The format of the virtual machine file (if power-source-type is vm)

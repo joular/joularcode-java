@@ -103,8 +103,8 @@ final class VmPowerFile implements PowerSource {
         String[] columns = firstLine(true).split(",", -1);
         if (columns.length == 5) {
             throw new IOException(file + " holds the power of the whole host. Point vm-power-file at the file"
-                    + " PowerJoular writes for the process of this virtual machine: with -p <pid> -o <file>, that is"
-                    + " <file>-<pid>.csv.");
+                    + " PowerJoular writes for the process of this virtual machine: with -p <pid> -o vm-power.csv, that"
+                    + " is vm-power-<pid>.csv.");
         }
         if (columns.length != 3) {
             throw new IOException(file + " does not hold the row PowerJoular writes with -o for a process"
