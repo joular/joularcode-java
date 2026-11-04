@@ -9,6 +9,8 @@
 
 # Joular Code for Java: Configuration
 #
+# A \ starts an escape in this file: on Windows, write paths with / or \\, e.g. C:/Users/me/results
+#
 # CPU power source
 # Options:
 #   auto (the virtual machine file when vm-power-file is set, else RAPL where there is one and it is readable, else the PowerJoular ring buffer)

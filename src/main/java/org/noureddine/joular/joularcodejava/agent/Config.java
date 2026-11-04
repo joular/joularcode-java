@@ -69,6 +69,10 @@ record Config(String powerSourceType, Path ringBufferPath, Path vmPowerFile, Str
                 properties.load(reader);
             } catch (IOException e) {
                 logger.log(Level.WARNING, "Could not read " + file.toAbsolutePath() + ", using defaults.", e);
+            } catch (IllegalArgumentException e) {
+                // A backslash starts an escape in this file, so a Windows path written with backslashes can break it
+                logger.log(Level.WARNING, "Could not read " + file.toAbsolutePath() + ": " + e.getMessage()
+                        + " Write paths with / or \\\\ instead of \\. Using defaults.");
             }
         }
         return from(properties);

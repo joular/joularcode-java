@@ -54,6 +54,17 @@ class ThreadSamplerTest {
         assertTrue(sampler.ownCpuTime() >= 0, "its time is read apart");
     }
 
+    /** Only a thread whose CPU time moved since the previous sample has its stack taken. */
+    @Test
+    void usedCpu_onlyWhenTheCpuTimeMovedSinceThePreviousSample() {
+        Samples samples = new Samples(Map.of(1L, 100L));
+
+        assertFalse(samples.usedCpu(1L, 100L));
+        assertTrue(samples.usedCpu(1L, 150L));
+        assertFalse(samples.usedCpu(1L, 150L), "it waited since the previous sample");
+        assertTrue(samples.usedCpu(2L, 10L), "it began inside the window");
+    }
+
     /** A thread blocked in native code is RUNNABLE, but uses no CPU, so the branch it waits on is charged nothing. */
     @Test
     void charge_branchCaughtWhileTheThreadUsedNoCpu_getsNothing() {

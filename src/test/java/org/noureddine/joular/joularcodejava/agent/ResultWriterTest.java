@@ -82,6 +82,26 @@ class ResultWriterTest {
         assertEquals("precious", Files.readString(target));
     }
 
+    /** Two runs with the same pid in the same second, as in containers sharing a results folder, get a folder each. */
+    @Test
+    void createRunDir_nameTaken_addsANumber() throws IOException {
+        Path planned = tempDir.resolve("results/1-20260101-000000");
+
+        assertEquals(planned, ResultWriter.createRunDir(planned));
+        assertEquals(tempDir.resolve("results/1-20260101-000000-2"), ResultWriter.createRunDir(planned));
+    }
+
+    /** A link planted at the run's name is not taken as its folder, so nothing is written where it points. */
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void createRunDir_linkAtTheName_isLeftAlone() throws IOException {
+        Path elsewhere = Files.createDirectory(tempDir.resolve("elsewhere"));
+        Path planned = tempDir.resolve("1-20260101-000000");
+        Files.createSymbolicLink(planned, elsewhere);
+
+        assertEquals(tempDir.resolve("1-20260101-000000-2"), ResultWriter.createRunDir(planned));
+    }
+
     /** Results already there are kept, and the header is not written twice. */
     @Test
     void open_existingResults_appendsWithoutASecondHeader() throws IOException {

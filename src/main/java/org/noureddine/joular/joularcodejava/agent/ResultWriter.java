@@ -14,6 +14,7 @@ package org.noureddine.joular.joularcodejava.agent;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -46,6 +47,7 @@ final class ResultWriter implements AutoCloseable {
     static final String CSV_HEADER = "Timestamp,branch,power_watts,energy_joules,interval_seconds,coverage";
 
     private static final DateTimeFormatter START = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
+    private static final int MAX_RUNS_PER_NAME = 100;
 
     private final Path resultsDir;
     private final boolean aggregate;
@@ -59,6 +61,25 @@ final class ResultWriter implements AutoCloseable {
     /** The folder of one run in the results directory, {@code <pid>-<start>}, so runs never mix. */
     static Path runDir(Path resultsDir) {
         return resultsDir.resolve(ProcessHandle.current().pid() + "-" + LocalDateTime.now().format(START));
+    }
+
+    /**
+     * Creates the folder of a run, adding {@code -2}, {@code -3}... to its name when it is taken: JVMs in containers that share a results folder often have the same pid, and start in the same second.
+     *
+     * @return the folder created
+     */
+    static Path createRunDir(Path runDir) throws IOException {
+        Files.createDirectories(runDir.toAbsolutePath().getParent());
+        for (int n = 1; n <= MAX_RUNS_PER_NAME; n++) {
+            Path dir = n == 1 ? runDir : runDir.resolveSibling(runDir.getFileName() + "-" + n);
+            try {
+                // Not createDirectories, which would take a link planted at that name as the folder
+                return Files.createDirectory(dir);
+            } catch (FileAlreadyExistsException e) {
+                // Taken, the next name is tried
+            }
+        }
+        throw new IOException("There are already " + MAX_RUNS_PER_NAME + " folders named " + runDir + ".");
     }
 
     /** Creates the directory and opens the files, so a path that cannot be written to fails at startup. */

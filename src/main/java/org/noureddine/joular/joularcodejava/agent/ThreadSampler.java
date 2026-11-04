@@ -42,6 +42,8 @@ final class ThreadSampler {
         final Map<Branch, Long> cpuNs = new HashMap<>();
         /** Per thread, its CPU time at its last sample, else at the window's start: all that is left of one that ends. */
         final Map<Long, Long> lastCpuNs;
+        /** Per thread, its CPU time at the previous sample, whatever it was doing then. */
+        private final Map<Long, Long> seenCpuNs;
         /** Per sampled thread, the branch its last sample caught it on. */
         private final Map<Long, Branch> lastBranch = new HashMap<>();
         int taken = 0;
@@ -50,6 +52,14 @@ final class ThreadSampler {
         /** @param startCpuNs the CPU time of each thread as the window starts */
         Samples(Map<Long, Long> startCpuNs) {
             lastCpuNs = new HashMap<>(startCpuNs);
+            seenCpuNs = new HashMap<>(startCpuNs);
+        }
+
+        /** Whether a thread used CPU since the previous sample. Only then can its stack be charged anything. */
+        boolean usedCpu(long threadId, long threadCpuNs) {
+            Long seenNs = seenCpuNs.put(threadId, threadCpuNs);
+            // A thread missing from the start began inside the window
+            return threadCpuNs > (seenNs == null ? 0 : seenNs);
         }
 
         /**
@@ -84,26 +94,32 @@ final class ThreadSampler {
     /** Charges each running thread's CPU time since its last reading to the branch it is on. */
     void sample(Samples samples) {
         samples.taken++;
-        ThreadInfo[] infos = threadBean.dumpAllThreads(false, false, maxDepth);
-        long[] ids = new long[infos.length];
-        Branch[] branches = new Branch[infos.length];
-        int running = 0;
-        for (ThreadInfo info : infos) {
-            if (info == null || info.getThreadId() == ownThreadId || info.getThreadState() != Thread.State.RUNNABLE) {
-                continue;
-            }
-            StackTraceElement[] stack = info.getStackTrace();
-            if (stack.length > 0) {
-                ids[running] = info.getThreadId();
-                branches[running++] = Branch.of(stack, lines);
+        // Read now rather than at the window's end, which a thread may not live to see
+        long[] ids = threadBean.getAllThreadIds();
+        long[] times = threadBean.getThreadCpuTime(ids);
+
+        // Only the stacks of threads that used CPU are taken: most threads of a server wait, and walking their
+        // stacks at every sample cost far more than the rest of the sampling
+        long[] busyIds = new long[ids.length];
+        long[] busyTimes = new long[ids.length];
+        int busy = 0;
+        for (int i = 0; i < ids.length; i++) {
+            // -1 means the thread ended since the ids were read
+            if (ids[i] != ownThreadId && times[i] >= 0 && samples.usedCpu(ids[i], times[i])) {
+                busyIds[busy] = ids[i];
+                busyTimes[busy++] = times[i];
             }
         }
-        // Read now rather than at the window's end, which a thread may not live to see
-        long[] times = threadBean.getThreadCpuTime(Arrays.copyOf(ids, running));
-        for (int i = 0; i < running; i++) {
-            // -1 means the thread ended since the dump
-            if (times[i] >= 0) {
-                samples.charge(ids[i], branches[i], times[i]);
+
+        ThreadInfo[] infos = threadBean.getThreadInfo(Arrays.copyOf(busyIds, busy), maxDepth);
+        for (int i = 0; i < busy; i++) {
+            // null when the thread ended since its CPU time was read
+            if (infos[i] == null || infos[i].getThreadState() != Thread.State.RUNNABLE) {
+                continue;
+            }
+            StackTraceElement[] stack = infos[i].getStackTrace();
+            if (stack.length > 0) {
+                samples.charge(busyIds[i], Branch.of(stack, lines), busyTimes[i]);
             }
         }
     }

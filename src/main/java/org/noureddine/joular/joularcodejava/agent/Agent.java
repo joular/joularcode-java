@@ -48,7 +48,7 @@ public final class Agent {
 
     /**
      * The logger of one of the agent's classes.
-     * The first one asked for sets java.util.logging up for the agent, so it is not touched before the agent has something to say.
+     * The first one asked for, in premain, sets java.util.logging up for the agent, before the application runs.
      */
     static Logger logger(Class<?> owner) {
         return Logging.get(owner);
@@ -86,7 +86,7 @@ public final class Agent {
 
     /**
      * Sends the agent's log records to stderr, without touching how the application logs.
-     * Loaded, and so set up, with the first logger asked for rather than in premain.
+     * Loaded, and so set up, with the first logger asked for.
      */
     private static final class Logging {
 

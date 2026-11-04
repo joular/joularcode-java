@@ -30,10 +30,10 @@ Detailed documentation (including user and reference guides) is available at: [h
 
 Joular Code for Java runs as a Java agent alongside your application. Every monitoring cycle (about 1 second), it:
 
-1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread, and charges the CPU time the thread used since its previous sample to the call branch it is on.
+1. **Samples the JVM stack**: every `stack-monitoring-sample-rate` milliseconds, it captures the stack trace of every `RUNNABLE` thread that used CPU since the previous sample, and charges the CPU time the thread used since its previous sample to the call branch it is on. Waiting threads are skipped, so the cost grows with the threads that run, not with all of them.
 2. **Measures CPU time**: at the start and end of each cycle, it reads the CPU time of each thread and of the whole JVM.
 3. **Reads the CPU power** of the machine over the cycle, from RAPL, PowerJoular, or the host of a virtual machine.
-4. **Scales to process power**: the JVM's share of the CPU power is its own CPU load over the machine's: `cpuPower * processLoad / systemLoad`. On Linux, the machine's load and its number of CPUs are read from `/proc/stat` over the cycle, so inside a container the share is of the host's CPUs, not of the few the cgroup lets the JVM see.
+4. **Scales to process power**: the JVM's share of the CPU power is its own CPU load over the machine's: `cpuPower * processLoad / systemLoad`. On Linux, the machine's load and its number of CPUs are read from `/proc/stat` over the cycle, so inside a container the share is of the host's CPUs, not of the few the cgroup lets the JVM see, and in a virtual machine the steal time, which the host gave to others, counts as idle.
 5. **Attributes energy to methods and execution branches**: each call branch receives a fraction of process power proportional to the CPU time charged to it, over the CPU time of all of the JVM's threads. A thread blocked in native I/O, which Java still reports as `RUNNABLE`, uses no CPU, so the branch it waits on is not charged for waiting.
 6. **Writes results** to CSV files: both power (W) and energy (J = W × interval) are recorded per branch per cycle.
 
@@ -112,6 +112,8 @@ All configuration is done via a `joularcodejava.properties` file, read from:
 3. or `joularcodejava.properties` in the current working directory
 
 A missing file, or a property left empty, means the default value will be used; a file that was named and is not there is reported with a warning, as is a value that is not valid. [joularcodejava.properties.example](joularcodejava.properties.example) is a commented example template you can use.
+
+In this file, `\` starts an escape sequence, so on Windows write paths with `/` or `\\`: `results-path=C:/Users/me/results`. Written `C:\Users\me\results`, the backslashes are dropped, and a `\u` (as in `C:\users`) makes the whole file unreadable, so the defaults are used, with a warning.
 
 ### Configuration properties
 
@@ -210,7 +212,7 @@ A third file, `lines-power-app-self.csv`, has one row per line of the applicatio
 
 ## :bar_chart: Generated Files
 
-Joular Code for Java writes results into the directory configured by `results-path`, in a folder per run, `<pid>-<yyyyMMdd-HHmmss>`, named after the JVM's process id and the time the agent started, so runs never mix. Two CSV files are produced there, five with `lines-monitoring=true`, and appended to during execution; with `aggregate=true`, they get their rows once, when the JVM stops:
+Joular Code for Java writes results into the directory configured by `results-path`, in a folder per run, `<pid>-<yyyyMMdd-HHmmss>`, named after the JVM's process id and the time the agent started, so runs never mix. When that folder is already there, as with JVMs in containers that share a results folder, have the same process id and start in the same second, `-2`, `-3`... is added to the name. Two CSV files are produced there, five with `lines-monitoring=true`, and appended to during execution; with `aggregate=true`, they get their rows once, when the JVM stops:
 
 | File | Contents |
 |---|---|
@@ -263,6 +265,7 @@ With RAPL, a cycle lasts one second, and the energy is read at its very end, so 
 - The agent never follows a symbolic link when it opens its results files or the ring buffer, since it may run as root and these often sit in directories every user can write to.
 - When the application runs as root, give the configuration file with `-Djoularcodejava.properties` rather than leaving it in a working directory others can write to, since it chooses where the results are written.
 - The agent's own monitoring thread is excluded from all energy measurements.
+- The agent sets up `java.util.logging` for its messages as it starts, before the application. Application servers that use their own log manager, such as WildFly, need to give it on the command line, as with other Java agents: `-Djava.util.logging.manager=org.jboss.logmanager.LogManager` with its JAR in `-Xbootclasspath/a:`.
 - Power values of `0.0` are suppressed in the output (rows with zero power are not written).
 - With RAPL, the cycle running when the JVM stops is written too, over the time it lasted. The other sources publish their power once a second, so that cycle is not written with them, and a program that ends within its first second leaves the files with only their header.
 - Virtual threads are not in thread dumps, and the JVM does not report their CPU time: what they run is spent by their carrier threads, and attributed to the carriers' own frames, the `ForkJoinPool` and `VirtualThread` branches of the JDK, not to the application's methods. `coverage` says how much is left unattributed.

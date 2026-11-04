@@ -50,6 +50,7 @@ final class ProcStat {
     /**
      * The {@code cpu} line holds user, nice, system, idle, iowait, irq, softirq and steal time, then guest times that
      * are already counted in user; each {@code cpuN} line after it is one CPU.
+     * Steal is time the host gave to others, so in a virtual machine it is counted as idle, not as the guest's work.
      */
     static Reading parse(List<String> lines) throws IOException {
         long total = -1;
@@ -70,7 +71,8 @@ final class ProcStat {
                 for (int i = 1; i < fields.length && i <= 8; i++) {
                     total += Long.parseLong(fields[i]);
                 }
-                idle = Long.parseLong(fields[4]) + Long.parseLong(fields[5]);
+                idle = Long.parseLong(fields[4]) + Long.parseLong(fields[5])
+                        + (fields.length > 8 ? Long.parseLong(fields[8]) : 0);
             }
         } catch (RuntimeException e) {
             throw new IOException("Unexpected cpu line in " + FILE + ".", e);

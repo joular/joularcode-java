@@ -46,7 +46,8 @@ final class Monitor {
     private final long sampleRateNs;
     // Each results file and how it names a branch
     private final Map<String, Function<Branch, String>> namings = new LinkedHashMap<>();
-    private final Path resultsDir;
+    /** Named as the agent starts, and renamed if that name is taken when the monitor thread creates it. */
+    private volatile Path resultsDir;
     private final boolean aggregate;
     private final OperatingSystemMXBean osBean;
     private final ThreadSampler sampler;
@@ -59,6 +60,7 @@ final class Monitor {
     private volatile boolean running = true;
     private boolean powerLost = false;
     private boolean windowErrorLogged = false;
+    // Once per run: a value hovering at its threshold would bring them back every few windows
     private boolean overrunWarned = false;
     private boolean lowCoverageWarned = false;
 
@@ -175,6 +177,7 @@ final class Monitor {
     /** Once the source is open, so a source that cannot be opened leaves no header-only files behind. */
     private boolean openResults() {
         try {
+            resultsDir = ResultWriter.createRunDir(resultsDir);
             results = new ResultWriter(resultsDir, namings.keySet(), aggregate);
             logger.log(Level.INFO, "Results are written to " + resultsDir.toAbsolutePath());
             return true;
@@ -239,6 +242,8 @@ final class Monitor {
             if (waitNs > 0) {
                 // Returns early on unpark, which is how stop() ends the wait
                 LockSupport.parkNanos(waitNs);
+                // An interrupt from the application ends it too, and every later one while it stays set
+                Thread.interrupted();
             } else {
                 samples.missed++;
                 nextSampleNs = System.nanoTime();
@@ -301,8 +306,8 @@ final class Monitor {
                     + TimeUnit.NANOSECONDS.toMillis(sampleRateNs) + " ms: " + samples.taken + " samples were taken"
                     + " in the last window, about one every " + achievedMs + " ms. Dumping the stacks of this many"
                     + " threads costs more than the interval allows. Raise the sample rate, or accept coarser data.");
+            overrunWarned = true;
         }
-        overrunWarned = overrunning;
     }
 
     private void warnIfLowCoverage(double coverage) {
@@ -314,7 +319,7 @@ final class Monitor {
                     + " threads that were sampled, so the power reported per method is a lower bound. Virtual"
                     + " threads, which the JVM does not report here, and threads that end before a sample catches"
                     + " them are the usual causes; a sample rate too coarse for the number of threads is another.");
+            lowCoverageWarned = true;
         }
-        lowCoverageWarned = low;
     }
 }
